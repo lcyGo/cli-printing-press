@@ -373,6 +373,7 @@ func scoreDoctor(dir string) int {
 func scoreAgentNative(dir string) int {
 	rootContent := readFileContent(filepath.Join(dir, "internal", "cli", "root.go"))
 	helpersContent := readFileContent(filepath.Join(dir, "internal", "cli", "helpers.go"))
+	clientContent := readFileContent(filepath.Join(dir, "internal", "client", "client.go"))
 	score := 0
 	// Presence: core agent flags (1pt each, max 5)
 	if strings.Contains(rootContent, `"json"`) {
@@ -390,48 +391,155 @@ func scoreAgentNative(dir string) int {
 	if strings.Contains(rootContent, `"yes"`) {
 		score++
 	}
-	// Quality: non-interactive (no prompts in command files)
-	cmdFiles := sampleCommandFiles(dir, 5)
-	hasPrompts := false
+	// Quality: typed exit codes (3+ distinct) — +1
+	exitCount := strings.Count(helpersContent, "code:")
+	if exitCount >= 3 {
+		score++
+	}
+	// Quality: help example validity (+2)
+	// Sample leaf command files (with RunE/Run:) and verify Example: fields are non-empty with valid flags
+	allSampled := sampleCommandFiles(dir, 10)
+	var cmdFiles []string
+	for _, content := range allSampled {
+		if strings.Contains(content, "RunE") || strings.Contains(content, "Run:") {
+			cmdFiles = append(cmdFiles, content)
+		}
+	}
+	nonEmptyExamples := 0
+	validFlagExamples := 0
+	flagDeclRe := regexp.MustCompile(`(?:StringVar|BoolVar|IntVar|Float64Var|StringSliceVar|Int64Var|UintVar)\b[^"]*"([a-z][-a-z0-9]*)"`)
+	exampleFlagRe := regexp.MustCompile(`--([a-z][-a-z0-9]*)`)
+	rootFlags := map[string]bool{}
+	for _, m := range flagDeclRe.FindAllStringSubmatch(rootContent, -1) {
+		rootFlags[m[1]] = true
+	}
 	for _, content := range cmdFiles {
-		if strings.Contains(content, "bufio.NewScanner(os.Stdin)") || strings.Contains(content, "Prompt") || strings.Contains(content, "ReadLine") {
-			hasPrompts = true
+		exampleText := extractExampleField(content)
+		if strings.TrimSpace(exampleText) != "" {
+			nonEmptyExamples++
+		}
+		// Collect flag declarations from this file
+		localFlags := map[string]bool{}
+		for k, v := range rootFlags {
+			localFlags[k] = v
+		}
+		for _, m := range flagDeclRe.FindAllStringSubmatch(content, -1) {
+			localFlags[m[1]] = true
+		}
+		// Check flags used in examples exist as declarations
+		usedFlags := exampleFlagRe.FindAllStringSubmatch(exampleText, -1)
+		if len(usedFlags) > 0 {
+			allValid := true
+			for _, m := range usedFlags {
+				if !localFlags[m[1]] {
+					allValid = false
+					break
+				}
+			}
+			if allValid {
+				validFlagExamples++
+			}
+		} else if strings.TrimSpace(exampleText) != "" {
+			// No flags in example is still valid (e.g. positional args only)
+			validFlagExamples++
+		}
+	}
+	if len(cmdFiles) > 0 {
+		if nonEmptyExamples*100/len(cmdFiles) >= 80 {
+			score++
+		}
+		if validFlagExamples*100/len(cmdFiles) >= 80 {
+			score++
+		}
+	}
+	// Quality: error message actionability (+1)
+	// Check that helpers.go contains actionable suggestion patterns
+	suggestionRe := regexp.MustCompile(`(?i)(try |use |run |check |see |ensure |verify )`)
+	suggestions := suggestionRe.FindAllString(helpersContent, -1)
+	distinctSuggestions := map[string]bool{}
+	for _, s := range suggestions {
+		distinctSuggestions[strings.ToLower(strings.TrimSpace(s))] = true
+	}
+	if len(distinctSuggestions) >= 3 {
+		score++
+	}
+	// Quality: bounded output defaults (+1)
+	// Check for default page/result limits that prevent unbounded pagination.
+	// Scan root.go, helpers.go, client.go, and all CLI command files (including
+	// infra files like search.go and analytics.go that define their own limits).
+	hasBound := false
+	boundPatterns := []string{"defaultLimit", "maxPages", "MaxResults", "DefaultPageSize"}
+	boundSources := []string{rootContent, helpersContent, clientContent}
+	// Also read all .go files in internal/cli/ for command-level limits
+	cliDir := filepath.Join(dir, "internal", "cli")
+	if entries, err := os.ReadDir(cliDir); err == nil {
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".go") &&
+				e.Name() != "root.go" && e.Name() != "helpers.go" {
+				boundSources = append(boundSources, readFileContent(filepath.Join(cliDir, e.Name())))
+			}
+		}
+	}
+	for _, src := range boundSources {
+		for _, p := range boundPatterns {
+			if strings.Contains(src, p) {
+				hasBound = true
+				break
+			}
+		}
+		if hasBound {
 			break
 		}
 	}
-	if !hasPrompts && len(cmdFiles) > 0 {
-		score++
-	}
-	// Quality: typed exit codes (5+ distinct)
-	exitCount := strings.Count(helpersContent, "code:")
-	if exitCount >= 5 {
-		score += 2
-	} else if exitCount >= 3 {
-		score++
-	}
-	// Excellence: --stdin examples in command files (at least 3 commands show stdin usage)
-	stdinExamples := 0
-	for _, content := range cmdFiles {
-		if strings.Contains(content, "--stdin") && strings.Contains(content, "Example") {
-			stdinExamples++
+	if !hasBound {
+		// Also check for --limit flag with a non-zero default (e.g. IntVar(&x, "limit", 100, ...))
+		// The default value follows "limit", so match: "limit", <non-zero int>,
+		// This excludes "limit", 0, ... which means unlimited.
+		limitDefaultRe := regexp.MustCompile(`(?:Int|Uint|Int64)(?:Var|VarP)?\([^)]*"limit"\s*,\s*[1-9][0-9]*\s*,`)
+		for _, src := range boundSources {
+			if limitDefaultRe.MatchString(src) {
+				hasBound = true
+				break
+			}
 		}
 	}
-	// Also check all command files for stdin examples, not just sample
-	allCmdFiles := sampleCommandFiles(dir, 0) // 0 = all
-	for _, content := range allCmdFiles {
-		if strings.Contains(content, "--stdin") && strings.Contains(content, "echo") {
-			stdinExamples++
-		}
-	}
-	if stdinExamples >= 3 {
-		score += 2
-	} else if stdinExamples >= 1 {
+	if hasBound {
 		score++
 	}
 	if score > 10 {
 		score = 10
 	}
 	return score
+}
+
+// extractExampleField extracts the Example: field value from a cobra command file.
+func extractExampleField(content string) string {
+	idx := strings.Index(content, "Example:")
+	if idx < 0 {
+		return ""
+	}
+	rest := content[idx+len("Example:"):]
+	rest = strings.TrimSpace(rest)
+	if len(rest) == 0 {
+		return ""
+	}
+	// Handle backtick-delimited strings
+	if rest[0] == '`' {
+		end := strings.Index(rest[1:], "`")
+		if end < 0 {
+			return ""
+		}
+		return rest[1 : 1+end]
+	}
+	// Handle double-quoted strings
+	if rest[0] == '"' {
+		end := strings.Index(rest[1:], `"`)
+		if end < 0 {
+			return ""
+		}
+		return rest[1 : 1+end]
+	}
+	return ""
 }
 
 func scoreLocalCache(dir string) int {
