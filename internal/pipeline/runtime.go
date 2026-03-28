@@ -2,7 +2,6 @@ package pipeline
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -174,7 +173,10 @@ func RunVerify(cfg VerifyConfig) (*VerifyReport, error) {
 // buildCLI compiles the generated CLI and returns the binary path.
 func buildCLI(dir string) (string, error) {
 	name := filepath.Base(dir)
-	binaryPath := filepath.Join(dir, name)
+	binaryPath, err := filepath.Abs(filepath.Join(dir, name))
+	if err != nil {
+		return "", fmt.Errorf("resolving binary path: %w", err)
+	}
 	cmdDir, err := findCLICommandDir(dir)
 	if err != nil {
 		return "", err
@@ -293,18 +295,9 @@ func classifyCommandKind(cmd *discoveredCommand, spec *openAPISpec) {
 	}
 
 	// Check spec for the command's HTTP method
-	if spec != nil {
-		for path, raw := range spec.Paths {
-			_ = path
-			var methods map[string]json.RawMessage
-			if json.Unmarshal(raw, &methods) == nil {
-				if _, hasGet := methods["get"]; hasGet {
-					// If command name appears to match this path's resource
-					cmd.Kind = "read"
-					return
-				}
-			}
-		}
+	if spec != nil && len(spec.Paths) > 0 {
+		cmd.Kind = "read"
+		return
 	}
 
 	// Default to read (safer for live mode)

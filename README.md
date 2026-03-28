@@ -1,14 +1,17 @@
 # CLI Printing Press
 
-Just making a CLI is not hard. Making a CLI that understands the power user is extremely hard.
+Just making a CLI is not hard. Making a CLI that understands the power user is extremely hard. And the power user in 2026 is an AI agent.
+
+Claude Code, Codex, Gemini CLI, Cursor - they call CLIs thousands of times a day. Every printing press CLI is designed for agents first: `--json` by default when piped, typed exit codes for self-correction, `--compact` for token efficiency, `--dry-run` for safe exploration. Humans get the same great experience, but agents are the primary design target.
 
 ```bash
 /printing-press Discord
 /printing-press Stripe
 /printing-press Linear
+/printing-press emboss ./library/notion-cli   # Second pass: improve an existing CLI
 ```
 
-One command. 12 phases. ~1 hour. Produces a Go CLI + MCP server + 8 analysis documents. REST or GraphQL. Matches every competitor feature, then adds the data layer they don't have.
+One command. Lean loop. Produces a Go CLI + MCP server that absorbs every feature from every competing tool, then transcends with compound use cases only possible with local data. REST or GraphQL.
 
 ### Get it
 
@@ -23,6 +26,16 @@ Discord's API has 300+ endpoints. Most generators stop there - wrap every endpoi
 Why does the 11-command tool win? Because Steinberger saw something Discord's own API designers didn't: **conversations are institutional knowledge.** Every message thread is a document that should be archived, indexed, and searched locally. Those 11 commands embody that insight. The 300 endpoint wrappers don't.
 
 Until now, you had to choose: breadth (wrap every endpoint) or depth (understand the user). The printing press eliminates that choice. It generates the full API surface AND matches every feature the top competitor has AND adds the discrawl-style intelligence layer AND an MCP server. One spec in. Everything out.
+
+## Absorb & Transcend
+
+The GOAT CLI isn't built by finding gaps. It's built by stealing every good idea and compounding on top.
+
+**Layer 1 - Absorb:** Before generating, Phase 1.5 catalogs every feature from every Claude Code plugin, MCP server, community skill, competing CLI, and automation script. Every feature becomes a row in the absorb manifest - something our CLI must match AND beat with offline support, agent-native output, and SQLite persistence.
+
+**Layer 2 - Transcend:** Once you have everything in SQLite, compound use cases emerge that no stateless tool can do. Velocity tracking requires historical cycle data. Churn risk requires joining charges + subscriptions. Bottleneck detection requires the full issue relationship graph. These are the Non-Obvious Insight commands - and they only work because Layer 1 put everything in a local database.
+
+The GOAT = everything everyone else does + everything nobody else thought of.
 
 ## The Non-Obvious Insight
 
@@ -113,36 +126,38 @@ The archetype is detected automatically from the spec. The entity mapper figures
 
 ## How It Works
 
-12 phases. Each writes a plan document. The artifacts are the product.
+The fast path is a lean loop. Artifacts still matter, but only when they directly improve the next phase.
 
 ```
-Phase 0     Visionary Research        (3-5 min)    NOI + domain identity + usage patterns
-Phase 0.1   API Key Prompt            (optional)   Offer live testing at end
-Phase 0.5   Power User Workflows      (2-3 min)    Compound commands power users want
-Phase 0.6   Feature Parity Audit      (5 min)      [NEW] Catalog competitor features, classify table stakes
-Phase 0.7   Prediction Engine         (15-25 min)  SQLite schema + FTS5 + sync strategy
-Phase 0.8   Product Thesis            (2 min)      Name (<api>-pp-cli), positioning, anti-scope with cost analysis
-Phase 1     Deep Research             (5-8 min)    Competitors, strategic justification
-Phase 2     Generate                  (1-2 min)    Go CLI + MCP server from spec + name/path/version validation
-Phase 3     Non-Obvious Insight Review(5-8 min)    Two-tier scoring + competitor feature matrix
-Phase 4     GOAT Build                (20-30 min)  7 priorities: data layer, table stakes, workflows, names, tests, distribution
-Phase 4.7   Proof of Behavior         (30 sec)     Verify data actually flows (no hallucinations)
-Phase 5     Ship Readiness Assessment (2-3 min)    Three-benchmark gate: architecture + quality + features
-Phase 5.5   Live API Testing          (optional)   Read-only tests + data pipeline smoke test
-Phase 5.7   Ship Loop                 (auto)       Fix issues and re-score until PASS
-Phase 5.9   Offer Emboss              (prompt)     [NEW] Opt-in second pass to improve further
+Phase 0     Resolve + Reuse           (1-3 min)    Reuse prior research, detect tokens, lock the spec source
+Phase 1     Research Brief            (5-10 min)   API identity, competitors, data layer, product thesis
+Phase 1.5   Ecosystem Absorb Gate    (5-10 min)   Catalog every MCP/skill/CLI feature -> absorb manifest
+Phase 2     Generate                  (1-2 min)    Go CLI + MCP server from spec with validation
+Phase 3     Build The GOAT            (10-20 min)  ALL absorbed features + transcendence commands
+Phase 4     Shipcheck                 (3-8 min)    dogfood + verify --fix + scorecard as one verification block
+Phase 5     Live Smoke (optional)     (2-5 min)    Read-only API smoke + data-flow check
 ```
 
 ### Codex Mode (opt-in)
 
 ```bash
-/printing-press Discord codex    # Offload code generation + fix patches to Codex CLI (~60% Opus token savings)
+/printing-press Discord codex    # Offload code generation to Codex CLI (~60% Opus token savings)
 /printing-press Discord          # Standard Opus mode (default)
 ```
 
-When you add `codex`, Phase 4's code generation tasks and later fix-application passes are delegated to Codex CLI. Claude stays the brain (research, planning, scoring, review). Codex does the hands (writing Go code from scoped prompts). Same quality, 60% fewer Opus tokens.
+When you add `codex`, Phase 3's code generation tasks are delegated to Codex CLI. Claude stays the brain (research, planning, scoring, review). Codex does the hands (writing Go code from scoped prompts). Same quality, 60% fewer Opus tokens.
+
+### Emboss Mode (second pass)
+
+```bash
+/printing-press emboss ./library/notion-cli   # Improve an existing CLI
+```
+
+Already generated a CLI? Emboss runs a 30-minute improvement cycle: audit baseline (verify + scorecard), re-research what's changed, identify top 5 improvements, build them, re-verify, report the delta. The binary handles the bookkeeping (`printing-press emboss --audit-only`), the skill handles the creative work.
 
 ## What Gets Generated
+
+**Designed for AI agents.** Every flag, every output format, every exit code is chosen because an agent will consume it. `--json` is automatic when piped. `--compact` drops to high-gravity fields only (id, name, status, timestamps) - 60-80% fewer tokens. Typed exit codes (`0`=success, `2`=usage, `3`=not found, `4`=auth, `5`=API, `7`=rate limited) let agents self-correct in one retry without parsing error text. `--dry-run` lets agents explore safely. `--stdin` enables batch operations. Humans benefit from all of this too - agent-native design is just good CLI design taken seriously.
 
 **Agent-first flags** (every command): `--json`, `--select`, `--dry-run`, `--stdin`, `--csv`, `--compact`, `--quiet`, `--yes`, `--no-input`, `--no-cache`, `--no-color`. Auto-JSON when piped (no `--json` needed). Typed exit codes (`0`=success, `2`=usage, `3`=not found, `4`=auth, `5`=API, `7`=rate limited).
 
@@ -206,10 +221,16 @@ Inspired by Peter Steinberger's [gogcli](https://github.com/steipete/gogcli). Tw
 **Why two tiers?** The original scorecard tested syntax (does this string exist in the file?) not semantics (does this code actually work?). Generated CLIs scored Grade A and failed on the first real API call. The v2 scorecard catches that.
 
 ```bash
-# Run the honest scorecard
+# Runtime verification: tests every command against real API or mock server
+printing-press verify --dir ./discord-pp-cli --spec /tmp/discord-spec.json --api-key $TOKEN
+
+# Emboss audit: baseline snapshot for improvement cycle
+printing-press emboss --dir ./discord-pp-cli --spec /tmp/discord-spec.json --audit-only
+
+# Quality scorecard: two-tier structural scoring
 printing-press scorecard --dir ./discord-pp-cli --spec /tmp/discord-spec.json
 
-# Run the mechanical dogfood validator
+# Mechanical dogfood: catches dead flags, invalid paths, auth mismatches
 printing-press dogfood --dir ./discord-pp-cli --spec /tmp/discord-spec.json
 ```
 

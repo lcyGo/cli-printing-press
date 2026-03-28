@@ -85,14 +85,11 @@ func Execute() error {
 {{- if .VisionSet.Store}}
 	rootCmd.AddCommand(newWorkflowCmd(&flags))
 {{- end}}
-{{- if .VisionSet.HasWorkflows}}
-	rootCmd.AddCommand(newStaleCmd(&flags))
-	rootCmd.AddCommand(newOrphansCmd(&flags))
-	rootCmd.AddCommand(newLoadCmd(&flags))
+{{- range .WorkflowConstructors}}
+	rootCmd.AddCommand(new{{.}}Cmd(&flags))
 {{- end}}
-{{- if .VisionSet.HasInsights}}
-	rootCmd.AddCommand(newHealthCmd(&flags))
-	rootCmd.AddCommand(newSimilarCmd(&flags))
+{{- range .InsightConstructors}}
+	rootCmd.AddCommand(new{{.}}Cmd(&flags))
 {{- end}}
 	rootCmd.AddCommand(newVersionCliCmd())
 

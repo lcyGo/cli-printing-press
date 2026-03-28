@@ -1,15 +1,15 @@
 ---
-title: "Repress Mode: Second-Pass Improvement for Generated CLIs"
+title: "Emboss Mode: Second-Pass Improvement for Generated CLIs"
 type: feat
 status: active
 date: 2026-03-27
 ---
 
-# Repress Mode: Second-Pass Improvement for Generated CLIs
+# Emboss Mode: Second-Pass Improvement for Generated CLIs
 
 ## Overview
 
-After the printing press generates a CLI (Phase 0-5, ~1 hour), you have a working tool. But it was built from spec analysis and research - not from using it. The `repress` command takes an already-generated CLI and runs a fresh improvement cycle: re-research the competitive landscape (things change), run verify to find what's broken, compare against the original scorecard, identify the top 5 improvements, build them, and re-verify.
+After the printing press generates a CLI (Phase 0-5, ~1 hour), you have a working tool. But it was built from spec analysis and research - not from using it. The `emboss` command takes an already-generated CLI and runs a fresh improvement cycle: re-research the competitive landscape (things change), run verify to find what's broken, compare against the original scorecard, identify the top 5 improvements, build them, and re-verify.
 
 It's the printing press equivalent of compound-engineering's `plan -> deepen-plan -> work` loop. First pass builds it. Second pass makes it good.
 
@@ -18,7 +18,7 @@ It's the printing press equivalent of compound-engineering's `plan -> deepen-pla
 /printing-press Discord
 
 # Second pass: improve what exists
-/printing-press repress ./discord-cli --spec /tmp/discord-spec.json
+/printing-press emboss ./discord-cli --spec /tmp/discord-spec.json
 ```
 
 ## Problem Statement
@@ -31,11 +31,11 @@ The first press run produces a CLI that scores 65-85/100. The verify command cat
 4. **Execute the improvements** - apply fixes, add missing workflow commands, improve the data layer
 5. **Re-verify** - prove the improvements actually worked
 
-Currently you'd do this manually: read the old artifacts, re-run some searches, eyeball the code, make changes, run verify. Repress automates the cycle.
+Currently you'd do this manually: read the old artifacts, re-run some searches, eyeball the code, make changes, run verify. Emboss automates the cycle.
 
 ## Proposed Solution
 
-### The Repress Cycle
+### The Emboss Cycle
 
 ```
 Input: existing CLI directory + original spec
@@ -113,7 +113,7 @@ Compare against the baseline from Step 1.
 ### Step 6: REPORT (The delta)
 
 ```
-REPRESS REPORT: discord-cli
+EMBOSS REPORT: discord-cli
 ==============================
            Before    After     Delta
 Scorecard: 73/100    82/100    +9
@@ -140,9 +140,9 @@ Remaining Gaps:
 Add to the printing press skill as an optional mode:
 
 ```
-/printing-press repress ./discord-cli           # Standard repress
-/printing-press repress ./discord-cli codex     # Codex-delegated improvements
-/printing-press repress ./discord-cli --spec /tmp/spec.json  # With spec for verify
+/printing-press emboss ./discord-cli           # Standard emboss
+/printing-press emboss ./discord-cli codex     # Codex-delegated improvements
+/printing-press emboss ./discord-cli --spec /tmp/spec.json  # With spec for verify
 ```
 
 ### As a Go Binary Command
@@ -150,7 +150,7 @@ Add to the printing press skill as an optional mode:
 Also add to the `printing-press` binary for the mechanical parts:
 
 ```bash
-printing-press repress --dir ./discord-cli --spec /tmp/spec.json [--fix] [--api-key TOKEN]
+printing-press emboss --dir ./discord-cli --spec /tmp/spec.json [--fix] [--api-key TOKEN]
 ```
 
 The binary handles: audit (verify + scorecard), re-verify, delta report.
@@ -163,9 +163,9 @@ The skill handles: re-research (web searches), gap analysis (reasoning), improve
 Add after the Anti-Shortcut Rules section:
 
 ```markdown
-## Repress Mode (Second Pass)
+## Emboss Mode (Second Pass)
 
-When the user runs `/printing-press repress <dir>`:
+When the user runs `/printing-press emboss <dir>`:
 
 1. This is NOT a from-scratch run. The CLI already exists.
 2. Read the existing CLI directory. Run verify + scorecard to get a baseline.
@@ -175,12 +175,12 @@ When the user runs `/printing-press repress <dir>`:
 6. Build each improvement atomically. Commit each.
 7. Re-verify. Report the delta.
 
-The repress should take ~30 minutes, not ~1 hour. It's surgical, not generative.
+The emboss should take ~30 minutes, not ~1 hour. It's surgical, not generative.
 ```
 
 ### In the Go Binary
 
-Add `printing-press repress` command that wraps:
+Add `printing-press emboss` command that wraps:
 1. `verify` (baseline)
 2. `scorecard` (baseline)
 3. User does improvements (skill-driven)
@@ -188,7 +188,7 @@ Add `printing-press repress` command that wraps:
 5. `scorecard` (after)
 6. Delta report
 
-The delta report is the new artifact. It goes in `docs/plans/<today>-repress-<api>-cli-delta.md`.
+The delta report is the new artifact. It goes in `docs/plans/<today>-emboss-<api>-cli-delta.md`.
 
 ## The Analogy
 
@@ -198,13 +198,13 @@ The delta report is the new artifact. It goes in `docs/plans/<today>-repress-<ap
 | `/deepen-plan` | Phase 0-1 research enrichment |
 | `/ce:work` | Phase 2-4 generation + build |
 | `/ce:review` | Phase 5 scorecard + verify |
-| **No equivalent** | **`/printing-press repress` (second pass)** |
+| **No equivalent** | **`/printing-press emboss` (second pass)** |
 
-Repress fills the gap. It's what you do after the first run when you look at it and say "this is good but not great." It's the deepen-plan + work cycle, applied to an already-generated CLI.
+Emboss fills the gap. It's what you do after the first run when you look at it and say "this is good but not great." It's the deepen-plan + work cycle, applied to an already-generated CLI.
 
 ## Acceptance Criteria
 
-- [ ] `/printing-press repress <dir>` runs the 6-step cycle
+- [ ] `/printing-press emboss <dir>` runs the 6-step cycle
 - [ ] Step 1 produces a baseline (verify pass rate + scorecard score)
 - [ ] Step 2 searches for new competitors/pain points (not full Phase 0)
 - [ ] Step 3 identifies and ranks top 5 improvements
@@ -213,11 +213,11 @@ Repress fills the gap. It's what you do after the first run when you look at it 
 - [ ] Step 6 produces a delta report in docs/plans/
 - [ ] Total time: ~30-40 minutes (not another full hour)
 - [ ] Codex delegation works for Step 4 improvements
-- [ ] The cycle is repeatable - you can repress multiple times
+- [ ] The cycle is repeatable - you can emboss multiple times
 
 ## The Name
 
-**`repress`** - run it through the press again. A printing press pun that communicates exactly what it does.
+**`emboss`** - run it through the press again. A printing press pun that communicates exactly what it does.
 
 Alternatives considered: refine, polish, hone, temper, sharpen, elevate, reforge, proof, second-edition. All fine words but none have the press connection.
 

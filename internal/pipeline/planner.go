@@ -161,16 +161,16 @@ func generateReviewPlan(ctx PlanContext) (string, error) {
 	writePipelineContext(&b, ctx.SeedData)
 
 	b.WriteString("## Steps\n\n")
-	b.WriteString("1. Run the Steinberger scorecard (internal/pipeline/scorecard.go)\n")
-	b.WriteString("2. Run dogfood Tier 1 (no auth) on the generated binary\n")
-	b.WriteString("3. Augment README with real dogfood output\n")
-	b.WriteString("4. Run anti-AI text filter on README\n")
-	b.WriteString("5. If any Steinberger dimension < 5/10, generate fix plans (self-improvement)\n\n")
+	b.WriteString("1. Run dogfood on the generated CLI with the same spec used for generation\n")
+	b.WriteString("2. Run verify with `--fix` to catch runtime issues and cheap auto-remediations\n")
+	b.WriteString("3. Run the Steinberger scorecard\n")
+	b.WriteString("4. Summarize the combined shipcheck result in review.md\n")
+	b.WriteString("5. If any major dimension still fails, generate fix plans\n\n")
 
 	b.WriteString("## What This Phase Must Produce\n\n")
-	b.WriteString(fmt.Sprintf("- scorecard.md in %s\n", ctx.SeedData.PipelineDir))
 	b.WriteString(fmt.Sprintf("- dogfood-results.json in %s\n", ctx.SeedData.PipelineDir))
-	b.WriteString("- Augmented README with real output\n")
+	b.WriteString(fmt.Sprintf("- scorecard.md in %s\n", ctx.SeedData.PipelineDir))
+	b.WriteString(fmt.Sprintf("- review.md in %s\n", ctx.SeedData.PipelineDir))
 	b.WriteString("- Fix plans for any low-scoring dimensions\n")
 
 	return b.String(), nil

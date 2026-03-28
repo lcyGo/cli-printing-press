@@ -3,6 +3,8 @@ package generator
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
@@ -117,14 +119,18 @@ func runCommand(dir string, timeout time.Duration, name string, args ...string) 
 
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOCACHE="+filepath.Join(dir, ".cache", "go-build"))
+	cacheDir, err := goBuildCacheDir(dir)
+	if err != nil {
+		return "", err
+	}
+	cmd.Env = append(os.Environ(), "GOCACHE="+cacheDir)
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err := cmd.Run()
+	err = cmd.Run()
 	output := strings.TrimSpace(strings.Join([]string{stdout.String(), stderr.String()}, "\n"))
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
@@ -137,4 +143,27 @@ func runCommand(dir string, timeout time.Duration, name string, args ...string) 
 	}
 
 	return output, nil
+}
+
+func goBuildCacheDir(dir string) (string, error) {
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("resolving build cache path: %w", err)
+	}
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		fallback := filepath.Join(absDir, ".cache", "go-build")
+		if mkErr := os.MkdirAll(fallback, 0o755); mkErr != nil {
+			return "", fmt.Errorf("creating fallback build cache dir: %w", mkErr)
+		}
+		return fallback, nil
+	}
+
+	sum := sha256.Sum256([]byte(absDir))
+	cacheDir := filepath.Join(homeDir, ".cache", "printing-press", "go-build", hex.EncodeToString(sum[:]))
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		return "", fmt.Errorf("creating build cache dir: %w", err)
+	}
+	return cacheDir, nil
 }

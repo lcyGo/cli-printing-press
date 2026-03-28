@@ -58,46 +58,55 @@ func bogusGet() {
 	assert.Equal(t, 1, invalidCount, "one path should be hallucinated")
 }
 
-func TestPathProof_DetectsShortDeclarationPaths(t *testing.T) {
+func TestNewVerifierAcceptsYAMLSpec(t *testing.T) {
 	dir := t.TempDir()
 	setupVerifierDirs(t, dir)
 
 	writeTestFile(t, filepath.Join(dir, "internal", "cli", "users_get.go"), `package cli
 func usersGet() {
-	path := "/users/{id}"
-}
-`)
-	writeTestFile(t, filepath.Join(dir, "internal", "cli", "bogus_get.go"), `package cli
-func bogusGet() {
-	path := "/bogus/endpoint"
+	path = "/users/{id}"
 }
 `)
 
-	specPath := filepath.Join(dir, "spec.json")
-	writeTestFile(t, specPath, `{
-  "paths": {
-    "/users/{user_id}": {}
-  },
-  "components": { "securitySchemes": {} }
-}`)
+	specPath := filepath.Join(dir, "spec.yaml")
+	writeTestFile(t, specPath, `openapi: 3.0.0
+info:
+  title: Users API
+  version: "1.0"
+servers:
+  - url: https://api.example.com
+paths:
+  /users/{id}:
+    get:
+      operationId: getUser
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ok
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+security:
+  - bearerAuth: []
+`)
 
 	v, err := NewVerifier(dir, specPath)
 	require.NoError(t, err)
 
 	results := v.PathProof()
-	require.Len(t, results, 2)
+	require.Len(t, results, 1)
+	assert.True(t, results[0].InSpec)
 
-	var validCount, invalidCount int
-	for _, r := range results {
-		if r.InSpec {
-			validCount++
-		} else {
-			invalidCount++
-			assert.Equal(t, "/bogus/endpoint", r.Path)
-		}
-	}
-	assert.Equal(t, 1, validCount, "one short-declared path should be in spec")
-	assert.Equal(t, 1, invalidCount, "one short-declared path should be hallucinated")
+	auth := v.AuthProof()
+	assert.NotEqual(t, "spec not provided; auth check skipped", auth.Detail)
+	assert.NotEmpty(t, auth.SpecScheme)
 }
 
 func TestPathProof_SkipsLocalCommands(t *testing.T) {

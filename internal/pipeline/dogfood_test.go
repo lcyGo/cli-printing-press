@@ -119,6 +119,65 @@ func authHeader(token string) string {
 	assert.Equal(t, report.Verdict, loaded.Verdict)
 }
 
+func TestRunDogfoodAcceptsYAMLSpec(t *testing.T) {
+	dir := t.TempDir()
+
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "internal", "cli"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "internal", "client"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "internal", "store"), 0o755))
+
+	writeTestFile(t, filepath.Join(dir, "internal", "cli", "root.go"), `package cli
+type rootFlags struct{}
+func initFlags(flags *rootFlags) { _ = flags }
+`)
+	writeTestFile(t, filepath.Join(dir, "internal", "cli", "users_get.go"), `package cli
+func usersGet() {
+	path := "/users/{id}"
+}
+`)
+	writeTestFile(t, filepath.Join(dir, "internal", "client", "client.go"), `package client
+func authHeader(token string) string {
+	return "Bearer " + token
+}
+`)
+	writeTestFile(t, filepath.Join(dir, "internal", "store", "store.go"), "package store\n")
+
+	specPath := filepath.Join(dir, "spec.yaml")
+	writeTestFile(t, specPath, `openapi: 3.0.0
+info:
+  title: Users API
+  version: "1.0"
+servers:
+  - url: https://api.example.com
+paths:
+  /users/{id}:
+    get:
+      operationId: getUser
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ok
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+security:
+  - bearerAuth: []
+`)
+
+	report, err := RunDogfood(dir, specPath)
+	require.NoError(t, err)
+	assert.Equal(t, 1, report.PathCheck.Tested)
+	assert.Equal(t, 1, report.PathCheck.Valid)
+	assert.True(t, report.AuthCheck.Match)
+}
+
 func TestCountDomainTables(t *testing.T) {
 	storeSource := `
 CREATE TABLE IF NOT EXISTS users (
@@ -158,23 +217,18 @@ func TestDeriveDogfoodVerdict(t *testing.T) {
 	report.PipelineCheck.SyncCallsDomain = true
 	assert.Equal(t, "PASS", deriveDogfoodVerdict(report, true))
 
-	// ExampleCheck: FAIL when <50% coverage
 	report.ExampleCheck = ExampleCheckResult{Tested: 10, WithExamples: 4}
 	assert.Equal(t, "FAIL", deriveDogfoodVerdict(report, true))
 
-	// ExampleCheck: not FAIL at exactly 50%
 	report.ExampleCheck = ExampleCheckResult{Tested: 10, WithExamples: 5}
 	assert.Equal(t, "PASS", deriveDogfoodVerdict(report, true))
 
-	// ExampleCheck: WARN when invalid flags present
 	report.ExampleCheck = ExampleCheckResult{Tested: 10, WithExamples: 10, InvalidFlags: []string{"--bogus"}}
 	assert.Equal(t, "WARN", deriveDogfoodVerdict(report, true))
 
-	// ExampleCheck: WARN when skipped (build failure etc.)
 	report.ExampleCheck = ExampleCheckResult{Skipped: true, Detail: "could not build CLI binary"}
 	assert.Equal(t, "WARN", deriveDogfoodVerdict(report, true))
 
-	// ExampleCheck: PASS when ran successfully with no issues
 	report.ExampleCheck = ExampleCheckResult{Tested: 10, WithExamples: 10, ValidExamples: 10}
 	assert.Equal(t, "PASS", deriveDogfoodVerdict(report, true))
 }

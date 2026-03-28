@@ -63,9 +63,9 @@ Use --fix to auto-patch common failures and re-test (max 3 iterations).`,
 
 			// Run fix loop if requested and score is below threshold
 			var fixReport *pipeline.FixLoopReport
-			if fix && report.PassRate < float64(threshold) {
-				fmt.Printf("\nPass rate %.0f%% < %d%% threshold. Running fix loop (max %d iterations)...\n\n",
-					report.PassRate, threshold, maxIterations)
+			if fix && shouldRunFixLoop(report) {
+				fmt.Printf("\nVerification verdict %s (pass rate %.0f%%, threshold %d%%). Running fix loop (max %d iterations)...\n\n",
+					report.Verdict, report.PassRate, threshold, maxIterations)
 				fixReport, err = pipeline.RunFixLoop(cfg, report, maxIterations)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Fix loop error: %v\n", err)
@@ -116,6 +116,13 @@ Use --fix to auto-patch common failures and re-test (max 3 iterations).`,
 	cmd.Flags().BoolVar(&cleanup, "cleanup", false, "Remove transient build artifacts after verification")
 	_ = cmd.MarkFlagRequired("dir")
 	return cmd
+}
+
+func shouldRunFixLoop(report *pipeline.VerifyReport) bool {
+	if report == nil {
+		return false
+	}
+	return report.Verdict != "PASS"
 }
 
 func printVerifyReport(report *pipeline.VerifyReport) {

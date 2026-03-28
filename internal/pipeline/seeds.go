@@ -274,7 +274,7 @@ date: {{now}}
 
 # Phase Goal
 
-Evaluate the generated CLI with static scoring and dogfooding evidence that determines ship readiness.
+Evaluate the generated CLI with one shipcheck block: dogfood, runtime verification, and scorecard evidence.
 
 ## Context
 
@@ -286,10 +286,10 @@ Evaluate the generated CLI with static scoring and dogfooding evidence that dete
 
 ## What This Phase Must Produce
 
-- Static quality score from 0 to 50
-- Dogfood score from 0 to 50
-- review.md in {{.PipelineDir}}
 - dogfood-results.json in {{.PipelineDir}}
+- verification-report.json in {{.OutputDir}}
+- scorecard.md in {{.PipelineDir}}
+- review.md in {{.PipelineDir}} summarizing the combined shipcheck result
 
 ## Prior Phase Outputs
 
@@ -297,8 +297,9 @@ Evaluate the generated CLI with static scoring and dogfooding evidence that dete
 
 ## Codebase Pointers
 
-- Review scoring rules defined by the pipeline review plan for this phase
-- Dogfood model uses three tiers: Tier 1 no credentials, Tier 2 read-only, Tier 3 sandbox write
+- printing-press dogfood --dir {{.OutputDir}} --spec <spec>
+- printing-press verify --dir {{.OutputDir}} --spec <spec> --fix
+- printing-press scorecard --dir {{.OutputDir}} --spec <spec>
 - Generated CLI binary and help surfaces in {{.OutputDir}}
 `,
 	PhaseAgentReadiness: `---

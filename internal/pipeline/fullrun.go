@@ -122,6 +122,7 @@ func MakeBestCLI(apiName, level, specFlag, specURL, outputDir, pressBinary strin
 
 	// Step 2: Generate
 	repoRoot := findRepoRootFrom(pressBinary)
+	qualitySpecPath := fullRunQualitySpecPath(specFlag, specURL)
 	var genArgs []string
 	if specFlag == "--docs" {
 		genArgs = []string{"generate", "--docs", specURL, "--name", apiName, "--output", workingDir, "--force"}
@@ -154,7 +155,6 @@ func MakeBestCLI(apiName, level, specFlag, specURL, outputDir, pressBinary strin
 	if err := copySpecToOutput(specFlag, specURL, workingDir); err != nil {
 		result.Errors = append(result.Errors, fmt.Sprintf("spec copy: %v", err))
 	}
-
 	// Step 2.5: LLM Polish
 	polishResult, polishErr := llmpolish.Polish(llmpolish.PolishRequest{
 		APIName:   apiName,
@@ -187,7 +187,7 @@ func MakeBestCLI(apiName, level, specFlag, specURL, outputDir, pressBinary strin
 		result.Errors = append(result.Errors, fmt.Sprintf("dogfood build: %v", buildErr))
 	} else {
 		defer os.Remove(cliBinaryPath)
-		dogfood, dogErr := RunDogfood(workingDir, "")
+		dogfood, dogErr := RunDogfood(workingDir, qualitySpecPath)
 		if dogErr != nil {
 			result.DogfoodError = dogErr.Error()
 			result.Errors = append(result.Errors, fmt.Sprintf("dogfood: %v", dogErr))
@@ -198,11 +198,7 @@ func MakeBestCLI(apiName, level, specFlag, specURL, outputDir, pressBinary strin
 	}
 
 	// Step 5.5: Proof of Behavior Verification
-	verSpecPath := ""
-	if specFlag == "--spec" {
-		verSpecPath = specURL
-	}
-	verReport, verErr := RunVerification(workingDir, verSpecPath)
+	verReport, verErr := RunVerification(workingDir, qualitySpecPath)
 	if verErr != nil {
 		result.VerificationError = verErr.Error()
 		result.Errors = append(result.Errors, fmt.Sprintf("verification: %v", verErr))
@@ -218,7 +214,7 @@ func MakeBestCLI(apiName, level, specFlag, specURL, outputDir, pressBinary strin
 				result.Remediation = remResult
 
 				// Re-verify after remediation
-				reVerReport, reVerErr := RunVerification(workingDir, verSpecPath)
+				reVerReport, reVerErr := RunVerification(workingDir, qualitySpecPath)
 				if reVerErr == nil {
 					result.Verification = reVerReport
 				}
@@ -227,7 +223,7 @@ func MakeBestCLI(apiName, level, specFlag, specURL, outputDir, pressBinary strin
 	}
 
 	// Step 6: Scorecard
-	scorecard, scErr := RunScorecard(workingDir, proofsDir, "", nil)
+	scorecard, scErr := RunScorecard(workingDir, proofsDir, qualitySpecPath, nil)
 	if scErr != nil {
 		result.ScorecardError = scErr.Error()
 		result.Errors = append(result.Errors, fmt.Sprintf("scorecard: %v", scErr))
@@ -255,6 +251,64 @@ func MakeBestCLI(apiName, level, specFlag, specURL, outputDir, pressBinary strin
 
 	result.Duration = time.Since(start)
 	return result
+}
+
+func fullRunQualitySpecPath(specFlag, specURL string) string {
+	if specFlag == "--spec" {
+		return specURL
+	}
+	return ""
+}
+
+// copySpecToOutput reads the spec from a local path or remote URL, converts
+// YAML to JSON if needed, and writes it as <outputDir>/spec.json.
+// Only runs when specFlag is "--spec". Errors are non-fatal.
+func copySpecToOutput(specFlag, specURL, outputDir string) error {
+	if specFlag != "--spec" || specURL == "" {
+		return nil
+	}
+	data, err := readSpecBytes(specURL)
+	if err != nil {
+		return fmt.Errorf("reading spec %s: %w", specURL, err)
+	}
+	data, err = ensureJSON(data)
+	if err != nil {
+		return fmt.Errorf("converting spec to JSON: %w", err)
+	}
+	dst := filepath.Join(outputDir, "spec.json")
+	if err := os.WriteFile(dst, data, 0o644); err != nil {
+		return fmt.Errorf("writing %s: %w", dst, err)
+	}
+	return nil
+}
+
+// readSpecBytes fetches spec content from a URL or reads it from a local file.
+func readSpecBytes(specURL string) ([]byte, error) {
+	if strings.HasPrefix(specURL, "http://") || strings.HasPrefix(specURL, "https://") {
+		resp, err := http.Get(specURL) //nolint:gosec // spec URLs are operator-provided
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("HTTP %d fetching %s", resp.StatusCode, specURL)
+		}
+		return io.ReadAll(resp.Body)
+	}
+	return os.ReadFile(specURL)
+}
+
+// ensureJSON converts YAML content to JSON. If the input is already valid
+// JSON, it is returned as-is.
+func ensureJSON(data []byte) ([]byte, error) {
+	if json.Valid(data) {
+		return data, nil
+	}
+	var obj interface{}
+	if err := yaml.Unmarshal(data, &obj); err != nil {
+		return nil, fmt.Errorf("not valid JSON or YAML: %w", err)
+	}
+	return json.Marshal(obj)
 }
 
 // listResources returns the resource names found in the generated CLI's
@@ -475,57 +529,6 @@ func PrintComparisonTable(results []*FullRunResult) string {
 
 	b.WriteString("\n")
 	return b.String()
-}
-
-// copySpecToOutput reads the spec from a local path or remote URL, converts
-// YAML to JSON if needed, and writes it as <outputDir>/spec.json.
-// Only runs when specFlag is "--spec". Errors are non-fatal.
-func copySpecToOutput(specFlag, specURL, outputDir string) error {
-	if specFlag != "--spec" || specURL == "" {
-		return nil
-	}
-	data, err := readSpecBytes(specURL)
-	if err != nil {
-		return fmt.Errorf("reading spec %s: %w", specURL, err)
-	}
-	data, err = ensureJSON(data)
-	if err != nil {
-		return fmt.Errorf("converting spec to JSON: %w", err)
-	}
-	dst := filepath.Join(outputDir, "spec.json")
-	if err := os.WriteFile(dst, data, 0o644); err != nil {
-		return fmt.Errorf("writing %s: %w", dst, err)
-	}
-	return nil
-}
-
-// readSpecBytes fetches spec content from a URL or reads it from a local file.
-func readSpecBytes(specURL string) ([]byte, error) {
-	if strings.HasPrefix(specURL, "http://") || strings.HasPrefix(specURL, "https://") {
-		resp, err := http.Get(specURL) //nolint:gosec // spec URLs are operator-provided
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("HTTP %d fetching %s", resp.StatusCode, specURL)
-		}
-		return io.ReadAll(resp.Body)
-	}
-	return os.ReadFile(specURL)
-}
-
-// ensureJSON converts YAML content to JSON. If the input is already valid
-// JSON, it is returned as-is.
-func ensureJSON(data []byte) ([]byte, error) {
-	if json.Valid(data) {
-		return data, nil
-	}
-	var obj interface{}
-	if err := yaml.Unmarshal(data, &obj); err != nil {
-		return nil, fmt.Errorf("not valid JSON or YAML: %w", err)
-	}
-	return json.Marshal(obj)
 }
 
 func writeRow(b *strings.Builder, label string, results []*FullRunResult, fn func(*FullRunResult) string) {

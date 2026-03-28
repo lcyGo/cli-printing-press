@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mvanhorn/cli-printing-press/internal/naming"
+	apispec "github.com/mvanhorn/cli-printing-press/internal/spec"
 )
 
 type DogfoodReport struct {
@@ -66,13 +67,8 @@ type ExampleCheckResult struct {
 }
 
 type openAPISpec struct {
-	Paths      map[string]json.RawMessage `json:"paths"`
-	Components struct {
-		SecuritySchemes map[string]struct {
-			Type   string `json:"type"`
-			Scheme string `json:"scheme"`
-		} `json:"securitySchemes"`
-	} `json:"components"`
+	Paths []string
+	Auth  apispec.AuthConfig
 }
 
 func RunDogfood(dir, specPath string) (*DogfoodReport, error) {
@@ -91,7 +87,7 @@ func RunDogfood(dir, specPath string) (*DogfoodReport, error) {
 		spec = loaded
 
 		report.PathCheck = checkPaths(dir, spec.Paths)
-		report.AuthCheck = checkAuth(dir, spec.Components.SecuritySchemes)
+		report.AuthCheck = checkAuth(dir, spec.Auth)
 	} else {
 		report.AuthCheck = AuthCheckResult{
 			Match:  true,
@@ -135,19 +131,20 @@ func writeDogfoodResults(report *DogfoodReport, dir string) error {
 }
 
 func loadDogfoodOpenAPISpec(specPath string) (*openAPISpec, error) {
-	data, err := os.ReadFile(specPath)
+	summary, err := loadSpecSummary(specPath)
 	if err != nil {
-		return nil, fmt.Errorf("reading spec: %w", err)
+		return nil, err
 	}
-
-	var spec openAPISpec
-	if err := json.Unmarshal(data, &spec); err != nil {
-		return nil, fmt.Errorf("parsing spec JSON: %w", err)
+	if summary == nil {
+		return nil, nil
 	}
-	return &spec, nil
+	return &openAPISpec{
+		Paths: summary.Paths,
+		Auth:  summary.Auth,
+	}, nil
 }
 
-func checkPaths(dir string, paths map[string]json.RawMessage) PathCheckResult {
+func checkPaths(dir string, paths []string) PathCheckResult {
 	result := PathCheckResult{}
 	if len(paths) == 0 {
 		return result
@@ -198,26 +195,23 @@ func checkPaths(dir string, paths map[string]json.RawMessage) PathCheckResult {
 	return result
 }
 
-func checkAuth(dir string, schemes map[string]struct {
-	Type   string `json:"type"`
-	Scheme string `json:"scheme"`
-}) AuthCheckResult {
+func checkAuth(dir string, auth apispec.AuthConfig) AuthCheckResult {
 	result := AuthCheckResult{
 		Match:  true,
 		Detail: "no recognized auth scheme in spec",
 	}
 
 	expectedPrefix := ""
-	for name, scheme := range schemes {
-		if strings.Contains(strings.ToLower(name), "bot") {
-			result.SpecScheme = name + ` scheme (expects "Bot " prefix)`
-			expectedPrefix = "Bot "
-			break
-		}
-		if strings.EqualFold(scheme.Type, "http") && strings.EqualFold(scheme.Scheme, "bearer") {
-			result.SpecScheme = `http bearer scheme (expects "Bearer " prefix)`
-			expectedPrefix = "Bearer "
-		}
+	switch {
+	case strings.Contains(strings.ToLower(auth.Format), "bot "):
+		result.SpecScheme = `bot token format (expects "Bot " prefix)`
+		expectedPrefix = "Bot "
+	case strings.EqualFold(auth.Type, "bearer_token"):
+		result.SpecScheme = `bearer token format (expects "Bearer " prefix)`
+		expectedPrefix = "Bearer "
+	case strings.Contains(strings.ToLower(auth.Format), "basic "):
+		result.SpecScheme = `basic auth format (expects "Basic " prefix)`
+		expectedPrefix = "Basic "
 	}
 
 	clientData, err := os.ReadFile(filepath.Join(dir, "internal", "client", "client.go"))
@@ -580,7 +574,10 @@ func findCLIName(dir string) string {
 }
 
 func buildDogfoodBinary(dir, cliName string) (string, error) {
-	buildPath := filepath.Join(dir, cliName+"-dogfood")
+	buildPath, err := filepath.Abs(filepath.Join(dir, cliName+"-dogfood"))
+	if err != nil {
+		return "", fmt.Errorf("resolving dogfood binary path: %w", err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "go", "build", "-o", buildPath, "./cmd/"+cliName)
@@ -659,16 +656,10 @@ func sampleEvenly(items []string, n int) []string {
 	return result
 }
 
-func compileSpecPathPatterns(paths map[string]json.RawMessage) []*regexp.Regexp {
-	keys := make([]string, 0, len(paths))
-	for path := range paths {
-		keys = append(keys, path)
-	}
-	sort.Strings(keys)
-
+func compileSpecPathPatterns(paths []string) []*regexp.Regexp {
 	paramRe := regexp.MustCompile(`\\\{[^/]+\\\}`)
 	var patterns []*regexp.Regexp
-	for _, path := range keys {
+	for _, path := range paths {
 		quoted := regexp.QuoteMeta(path)
 		regex := "^" + paramRe.ReplaceAllString(quoted, `[^/]+`) + "$"
 		patterns = append(patterns, regexp.MustCompile(regex))

@@ -148,10 +148,7 @@ func (v *Verifier) PathProof() []PathProofResult {
 	var specKeys []string
 	if v.spec != nil && len(v.spec.Paths) > 0 {
 		specPatterns = compileSpecPathPatterns(v.spec.Paths)
-		specKeys = make([]string, 0, len(v.spec.Paths))
-		for k := range v.spec.Paths {
-			specKeys = append(specKeys, k)
-		}
+		specKeys = append(specKeys, v.spec.Paths...)
 	}
 
 	var results []PathProofResult
@@ -415,20 +412,22 @@ func (v *Verifier) AuthProof() AuthProofResult {
 	}
 
 	expectedPrefix := ""
-	for name, scheme := range v.spec.Components.SecuritySchemes {
-		if strings.Contains(strings.ToLower(name), "bot") {
-			schemeName := name + ` scheme (expects "Bot " prefix)`
-			result.SpecFormat = schemeName
-			result.SpecScheme = schemeName
-			expectedPrefix = "Bot "
-			break
-		}
-		if strings.EqualFold(scheme.Type, "http") && strings.EqualFold(scheme.Scheme, "bearer") {
-			schemeName := `http bearer scheme (expects "Bearer " prefix)`
-			result.SpecFormat = schemeName
-			result.SpecScheme = schemeName
-			expectedPrefix = "Bearer "
-		}
+	switch {
+	case strings.Contains(strings.ToLower(v.spec.Auth.Format), "bot "):
+		schemeName := `bot token format (expects "Bot " prefix)`
+		result.SpecFormat = schemeName
+		result.SpecScheme = schemeName
+		expectedPrefix = "Bot "
+	case strings.EqualFold(v.spec.Auth.Type, "bearer_token"):
+		schemeName := `bearer token format (expects "Bearer " prefix)`
+		result.SpecFormat = schemeName
+		result.SpecScheme = schemeName
+		expectedPrefix = "Bearer "
+	case strings.Contains(strings.ToLower(v.spec.Auth.Format), "basic "):
+		schemeName := `basic auth format (expects "Basic " prefix)`
+		result.SpecFormat = schemeName
+		result.SpecScheme = schemeName
+		expectedPrefix = "Basic "
 	}
 
 	clientData, err := os.ReadFile(filepath.Join(v.Dir, "internal", "client", "client.go"))
@@ -465,7 +464,7 @@ func (v *Verifier) AuthProof() AuthProofResult {
 	}
 
 	if expectedPrefix == "" {
-		result.Detail = "no bot/bearer scheme detected in spec"
+		result.Detail = "no bot/bearer/basic auth format detected in spec"
 		return result
 	}
 

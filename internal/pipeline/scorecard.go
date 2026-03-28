@@ -6,9 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
+
+	apispec "github.com/mvanhorn/cli-printing-press/internal/spec"
 )
 
 // infraCoreFiles are CLI infrastructure files excluded from workflow/insight scoring.
@@ -822,15 +823,9 @@ func scoreInsight(dir string) int {
 	}
 }
 
-type openAPISecurityScheme struct {
-	Name string
-	Type string
-	In   string
-}
-
 type openAPISpecInfo struct {
-	Paths           []string
-	SecuritySchemes []openAPISecurityScheme
+	Paths []string
+	Auth  apispec.AuthConfig
 }
 
 func loadOpenAPISpec(specPath string) *openAPISpecInfo {
@@ -838,42 +833,14 @@ func loadOpenAPISpec(specPath string) *openAPISpecInfo {
 		return nil
 	}
 
-	data, err := os.ReadFile(specPath)
-	if err != nil {
+	summary, err := loadSpecSummary(specPath)
+	if err != nil || summary == nil {
 		return nil
 	}
-
-	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil
+	return &openAPISpecInfo{
+		Paths: summary.Paths,
+		Auth:  summary.Auth,
 	}
-
-	info := &openAPISpecInfo{}
-
-	if paths, ok := raw["paths"].(map[string]any); ok {
-		for path := range paths {
-			info.Paths = append(info.Paths, path)
-		}
-		slices.Sort(info.Paths)
-	}
-
-	if components, ok := raw["components"].(map[string]any); ok {
-		if securitySchemes, ok := components["securitySchemes"].(map[string]any); ok {
-			for schemeName, value := range securitySchemes {
-				scheme := openAPISecurityScheme{Name: schemeName}
-				if fields, ok := value.(map[string]any); ok {
-					scheme.Type = strings.ToLower(asString(fields["scheme"]))
-					if scheme.Type == "" {
-						scheme.Type = strings.ToLower(asString(fields["type"]))
-					}
-					scheme.In = strings.ToLower(asString(fields["in"]))
-				}
-				info.SecuritySchemes = append(info.SecuritySchemes, scheme)
-			}
-		}
-	}
-
-	return info
 }
 
 func scorePathValidity(dir, specPath string) int {
@@ -917,7 +884,7 @@ func scoreAuthProtocol(dir, specPath string) int {
 	}
 
 	spec := loadOpenAPISpec(specPath)
-	if spec == nil || len(spec.SecuritySchemes) == 0 {
+	if spec == nil {
 		return 5
 	}
 
@@ -933,39 +900,39 @@ func scoreAuthProtocol(dir, specPath string) int {
 	queryMatched := false
 	envMatched := false
 
-	for _, scheme := range spec.SecuritySchemes {
-		nameLower := strings.ToLower(scheme.Name)
-		switch {
-		case strings.Contains(nameLower, "bot"):
-			if strings.Contains(clientContent, `"Bot "`) || strings.Contains(clientContent, "`Bot `") {
-				authHeaderMatched = true
-			}
-		case strings.Contains(nameLower, "bearer") || scheme.Type == "bearer" || scheme.Type == "http":
-			if strings.Contains(clientContent, `"Bearer "`) || strings.Contains(clientContent, "`Bearer `") {
-				authHeaderMatched = true
-			}
-		case strings.Contains(nameLower, "basic") || scheme.Type == "basic":
-			if strings.Contains(clientContent, `"Basic "`) || strings.Contains(clientContent, "`Basic `") {
-				authHeaderMatched = true
-			}
+	switch {
+	case strings.Contains(strings.ToLower(spec.Auth.Format), "bot "):
+		if strings.Contains(clientContent, `"Bot "`) || strings.Contains(clientContent, "`Bot `") {
+			authHeaderMatched = true
 		}
+	case strings.EqualFold(spec.Auth.Type, "bearer_token"):
+		if strings.Contains(clientContent, `"Bearer "`) || strings.Contains(clientContent, "`Bearer `") {
+			authHeaderMatched = true
+		}
+	case strings.Contains(strings.ToLower(spec.Auth.Format), "basic "):
+		if strings.Contains(clientContent, `"Basic "`) || strings.Contains(clientContent, "`Basic `") {
+			authHeaderMatched = true
+		}
+	}
 
-		headerName := "Authorization"
-		if strings.Contains(nameLower, "bot") {
-			headerName = "Authorization"
-		}
-		if strings.Contains(clientContent, `Header.Set("`+headerName+`"`) ||
-			strings.Contains(clientContent, `Header.Add("`+headerName+`"`) {
-			headerNameMatched = true
-		}
+	headerName := spec.Auth.Header
+	if headerName == "" {
+		headerName = "Authorization"
+	}
+	if strings.Contains(clientContent, `Header.Set("`+headerName+`"`) ||
+		strings.Contains(clientContent, `Header.Add("`+headerName+`"`) {
+		headerNameMatched = true
+	}
 
-		if scheme.In == "query" && (strings.Contains(clientContent, ".Query()") || strings.Contains(clientContent, "url.Values") || strings.Contains(clientContent, "RawQuery")) {
-			queryMatched = true
-		}
+	if strings.EqualFold(spec.Auth.In, "query") &&
+		(strings.Contains(clientContent, ".Query()") || strings.Contains(clientContent, "url.Values") || strings.Contains(clientContent, "RawQuery")) {
+		queryMatched = true
+	}
 
-		envNeedle := sanitizeEnvName(scheme.Name)
-		if envNeedle != "" && strings.Contains(strings.ToUpper(configContent), envNeedle) {
+	for _, envVar := range spec.Auth.EnvVars {
+		if strings.Contains(strings.ToUpper(configContent), strings.ToUpper(envVar)) {
 			envMatched = true
+			break
 		}
 	}
 
