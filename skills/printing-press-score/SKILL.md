@@ -79,7 +79,7 @@ For each resolved CLI directory, find the OpenAPI spec:
 
 1. Check `<cli-dir>/spec.json` — the pipeline converts YAML specs to JSON during generation
 2. If not found, scan `docs/plans/*-pipeline/state.json` files for one matching this CLI's directory. Read its `spec_path` field. If that file exists on disk, use it.
-3. If no spec found, **proceed without `--spec`**. Note to the user: "No spec found — Tier 2 (domain correctness) scores will be 0. Provide a spec path to get full scoring."
+3. If no spec found, **proceed without `--spec`**. Note to the user: "No spec found — spec-derived dimensions will be marked N/A and omitted from the denominator. Provide a spec path for full scoring."
 
 ## Step 4: Build the Binary
 
@@ -121,8 +121,8 @@ Parse the JSON output. The structure is:
     "vision": 6,
     "workflows": 3,
     "insight": 5,
-    "path_validity": 9,
-    "auth_protocol": 8,
+    "path_validity": 0,
+    "auth_protocol": 0,
     "data_pipeline_integrity": 7,
     "sync_correctness": 6,
     "type_fidelity": 4,
@@ -131,9 +131,12 @@ Parse the JSON output. The structure is:
     "percentage": 72
   },
   "overall_grade": "B",
-  "gap_report": ["..."]
+  "gap_report": ["..."],
+  "unscored_dimensions": ["path_validity", "auth_protocol"]
 }
 ```
+
+If `unscored_dimensions` is present, those dimensions should be rendered as `N/A`, not `0/x`, and should be described as omitted from the denominator rather than as fixable CLI defects. For backward compatibility, JSON still encodes the numeric fields as `0`; consumers must use `unscored_dimensions` to distinguish `N/A` from a real zero.
 
 ### Compare Mode
 
@@ -195,10 +198,10 @@ Gaps:
 - <gap 2>
 ```
 
-If Tier 2 was skipped (no spec), add a note after the table:
+If `unscored_dimensions` is non-empty, add a note after the table:
 
 ```
-Note: Tier 2 scores are 0 — no OpenAPI spec was found. Run with a spec path for full scoring.
+Note: path_validity, auth_protocol were unscored and omitted from the denominator. Provide a spec path for full scoring.
 ```
 
 ### Compare Table

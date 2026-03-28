@@ -6,10 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
-
-	apispec "github.com/mvanhorn/cli-printing-press/internal/spec"
 )
 
 // infraCoreFiles are CLI infrastructure files excluded from workflow/insight scoring.
@@ -29,11 +28,12 @@ var infraAllFiles = map[string]bool{
 
 // Scorecard holds the auto-scored evaluation of a generated CLI against the Steinberger bar.
 type Scorecard struct {
-	APIName          string       `json:"api_name"`
-	Steinberger      SteinerScore `json:"steinberger"`
-	CompetitorScores []CompScore  `json:"competitor_scores"`
-	OverallGrade     string       `json:"overall_grade"`
-	GapReport        []string     `json:"gap_report"`
+	APIName            string       `json:"api_name"`
+	Steinberger        SteinerScore `json:"steinberger"`
+	CompetitorScores   []CompScore  `json:"competitor_scores"`
+	OverallGrade       string       `json:"overall_grade"`
+	GapReport          []string     `json:"gap_report"`
+	UnscoredDimensions []string     `json:"unscored_dimensions,omitempty"`
 }
 
 // SteinerScore breaks down the Steinberger bar into 11 dimensions, each 0-10.
@@ -91,8 +91,24 @@ func RunScorecard(outputDir, pipelineDir, specPath string, verifyReport *VerifyR
 	sc.Steinberger.Vision = scoreVision(outputDir)
 	sc.Steinberger.Workflows = scoreWorkflows(outputDir)
 	sc.Steinberger.Insight = scoreInsight(outputDir)
-	sc.Steinberger.PathValidity = scorePathValidity(outputDir, specPath)
-	sc.Steinberger.AuthProtocol = scoreAuthProtocol(outputDir, specPath)
+
+	spec, err := loadOpenAPISpec(specPath)
+	if err != nil {
+		return nil, err
+	}
+
+	pathValidity := evaluatePathValidity(outputDir, spec)
+	sc.Steinberger.PathValidity = pathValidity.score
+	if !pathValidity.scored {
+		sc.UnscoredDimensions = append(sc.UnscoredDimensions, "path_validity")
+	}
+
+	authProtocol := evaluateAuthProtocol(outputDir, spec)
+	sc.Steinberger.AuthProtocol = authProtocol.score
+	if !authProtocol.scored {
+		sc.UnscoredDimensions = append(sc.UnscoredDimensions, "auth_protocol")
+	}
+
 	sc.Steinberger.DataPipelineIntegrity = scoreDataPipelineIntegrity(outputDir)
 	sc.Steinberger.SyncCorrectness = scoreSyncCorrectness(outputDir)
 	sc.Steinberger.TypeFidelity = scoreTypeFidelity(outputDir)
@@ -129,7 +145,18 @@ func RunScorecard(outputDir, pipelineDir, specPath string, verifyReport *VerifyR
 
 	// Weighted composite: Tier 1 = 50%, Tier 2 = 50% of final 100-point scale
 	tier1Normalized := (tier1Raw * 50) / 120 // scale 0-120 to 0-50
-	tier2Normalized := (tier2Raw * 50) / 50  // scale 0-50 to 0-50
+	tier2Max := 50
+	if sc.IsDimensionUnscored("path_validity") {
+		tier2Max -= 10
+	}
+	if sc.IsDimensionUnscored("auth_protocol") {
+		tier2Max -= 10
+	}
+
+	tier2Normalized := 0
+	if tier2Max > 0 {
+		tier2Normalized = (tier2Raw * 50) / tier2Max
+	}
 	sc.Steinberger.Total = tier1Normalized + tier2Normalized
 
 	if sc.Steinberger.Total > 0 {
@@ -155,7 +182,7 @@ func RunScorecard(outputDir, pipelineDir, specPath string, verifyReport *VerifyR
 	sc.OverallGrade = computeGrade(sc.Steinberger.Percentage)
 
 	// Gap report for dimensions below 5
-	sc.GapReport = buildGapReport(sc.Steinberger)
+	sc.GapReport = buildGapReport(sc.Steinberger, sc.UnscoredDimensions)
 
 	// Competitor comparison from research.json
 	sc.CompetitorScores = buildCompetitorScores(sc.Steinberger.Total, pipelineDir)
@@ -166,6 +193,15 @@ func RunScorecard(outputDir, pipelineDir, specPath string, verifyReport *VerifyR
 	}
 
 	return sc, nil
+}
+
+func (sc *Scorecard) IsDimensionUnscored(name string) bool {
+	for _, dimension := range sc.UnscoredDimensions {
+		if dimension == name {
+			return true
+		}
+	}
+	return false
 }
 
 func scoreOutputModes(dir string) int {
@@ -820,40 +856,126 @@ func scoreInsight(dir string) int {
 	}
 }
 
+type openAPISecurityScheme struct {
+	Key        string
+	Type       string
+	Scheme     string
+	In         string
+	HeaderName string
+}
+
+type securityRequirementSet struct {
+	Alternatives    [][]string
+	AllowsAnonymous bool
+}
+
 type openAPISpecInfo struct {
-	Paths []string
-	Auth  apispec.AuthConfig
+	Paths                []string
+	SecuritySchemes      map[string]openAPISecurityScheme
+	SecurityRequirements []securityRequirementSet
 }
 
-func loadOpenAPISpec(specPath string) *openAPISpecInfo {
+func loadOpenAPISpec(specPath string) (*openAPISpecInfo, error) {
 	if specPath == "" {
-		return nil
+		return nil, nil
 	}
 
-	summary, err := loadSpecSummary(specPath)
-	if err != nil || summary == nil {
-		return nil
+	data, err := os.ReadFile(specPath)
+	if err != nil {
+		return nil, fmt.Errorf("reading spec: %w", err)
 	}
-	return &openAPISpecInfo{
-		Paths: summary.Paths,
-		Auth:  summary.Auth,
+
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("parsing spec JSON: %w", err)
 	}
+
+	info := &openAPISpecInfo{
+		SecuritySchemes: make(map[string]openAPISecurityScheme),
+	}
+	if paths, ok := raw["paths"].(map[string]any); ok {
+		for path := range paths {
+			info.Paths = append(info.Paths, path)
+		}
+		slices.Sort(info.Paths)
+	}
+
+	if components, ok := raw["components"].(map[string]any); ok {
+		if securitySchemes, ok := components["securitySchemes"].(map[string]any); ok {
+			for schemeName, value := range securitySchemes {
+				scheme := openAPISecurityScheme{Key: schemeName}
+				if fields, ok := value.(map[string]any); ok {
+					scheme.Type = strings.ToLower(asString(fields["type"]))
+					scheme.Scheme = strings.ToLower(asString(fields["scheme"]))
+					scheme.In = strings.ToLower(asString(fields["in"]))
+					scheme.HeaderName = asString(fields["name"])
+				}
+				info.SecuritySchemes[schemeName] = scheme
+			}
+		}
+	}
+
+	rootSecurity, rootHasSecurity := parseSecurityRequirementSet(raw["security"])
+	foundOperation := false
+	if paths, ok := raw["paths"].(map[string]any); ok {
+		for _, pathValue := range paths {
+			pathItem, ok := pathValue.(map[string]any)
+			if !ok {
+				continue
+			}
+			for method, operationValue := range pathItem {
+				if !isHTTPMethod(method) {
+					continue
+				}
+				foundOperation = true
+				operation, ok := operationValue.(map[string]any)
+				if !ok {
+					continue
+				}
+				if requirementSet, ok := parseSecurityRequirementSet(operation["security"]); ok {
+					info.SecurityRequirements = append(info.SecurityRequirements, requirementSet)
+					continue
+				}
+				if rootHasSecurity {
+					info.SecurityRequirements = append(info.SecurityRequirements, rootSecurity)
+				}
+			}
+		}
+	}
+	if !foundOperation && rootHasSecurity {
+		info.SecurityRequirements = append(info.SecurityRequirements, rootSecurity)
+	}
+
+	for _, requirementSet := range info.SecurityRequirements {
+		for _, alternative := range requirementSet.Alternatives {
+			for _, name := range alternative {
+				if _, ok := info.SecuritySchemes[name]; !ok {
+					return nil, fmt.Errorf("spec references undefined security scheme %q", name)
+				}
+			}
+		}
+	}
+
+	return info, nil
 }
 
-func scorePathValidity(dir, specPath string) int {
-	if specPath == "" {
-		return 5
-	}
+type dimensionScore struct {
+	score  int
+	scored bool
+}
 
-	spec := loadOpenAPISpec(specPath)
-	if spec == nil || len(spec.Paths) == 0 {
-		return 5
+func evaluatePathValidity(dir string, spec *openAPISpecInfo) dimensionScore {
+	if spec == nil {
+		return dimensionScore{}
+	}
+	if len(spec.Paths) == 0 {
+		return dimensionScore{}
 	}
 
 	pathRe := regexp.MustCompile(`\bpath\s*(?::=|=|:)\s*"([^"]+)"`)
 	cmdFiles := sampleCommandFiles(dir, 10)
 	if len(cmdFiles) == 0 {
-		return 0
+		return dimensionScore{scored: true}
 	}
 
 	total := 0
@@ -870,69 +992,190 @@ func scorePathValidity(dir, specPath string) int {
 	}
 
 	if total == 0 {
-		return 0
+		return dimensionScore{scored: true}
 	}
-	return (matches * 10) / total
+	return dimensionScore{
+		score:  (matches * 10) / total,
+		scored: true,
+	}
 }
 
-func scoreAuthProtocol(dir, specPath string) int {
-	if specPath == "" {
-		return 5
-	}
-
-	spec := loadOpenAPISpec(specPath)
+func evaluateAuthProtocol(dir string, spec *openAPISpecInfo) dimensionScore {
 	if spec == nil {
-		return 5
+		return dimensionScore{}
+	}
+	if len(spec.SecurityRequirements) == 0 {
+		return dimensionScore{}
 	}
 
 	clientContent := readFileContent(filepath.Join(dir, "internal", "client", "client.go"))
 	configContent := readFileContent(filepath.Join(dir, "internal", "config", "config.go"))
 	if clientContent == "" {
-		return 0
+		return dimensionScore{scored: true}
 	}
 
-	score := 0
+	totalScore := 0
+	scoredSets := 0
+	for _, requirementSet := range spec.SecurityRequirements {
+		if requirementSet.AllowsAnonymous {
+			continue
+		}
+
+		bestScore := -1
+		scoreable := false
+		for _, alternative := range requirementSet.Alternatives {
+			score, ok := scoreAuthAlternative(clientContent, configContent, spec.SecuritySchemes, alternative)
+			if !ok {
+				continue
+			}
+			scoreable = true
+			if score > bestScore {
+				bestScore = score
+			}
+		}
+		if !scoreable {
+			continue
+		}
+
+		totalScore += bestScore
+		scoredSets++
+	}
+	if scoredSets == 0 {
+		return dimensionScore{}
+	}
+	return dimensionScore{
+		score:  totalScore / scoredSets,
+		scored: true,
+	}
+}
+
+func parseSecurityRequirementSet(value any) (securityRequirementSet, bool) {
+	requirements, ok := value.([]any)
+	if !ok {
+		return securityRequirementSet{}, false
+	}
+
+	set := securityRequirementSet{}
+	if len(requirements) == 0 {
+		set.AllowsAnonymous = true
+		return set, true
+	}
+
+	seenAlternatives := make(map[string]struct{})
+	for _, requirement := range requirements {
+		names, ok := requirement.(map[string]any)
+		if !ok {
+			continue
+		}
+		if len(names) == 0 {
+			set.AllowsAnonymous = true
+			continue
+		}
+
+		var alternative []string
+		for name := range names {
+			if strings.TrimSpace(name) == "" {
+				continue
+			}
+			alternative = append(alternative, name)
+		}
+		if len(alternative) == 0 {
+			set.AllowsAnonymous = true
+			continue
+		}
+		slices.Sort(alternative)
+		key := strings.Join(alternative, "\x00")
+		if _, ok := seenAlternatives[key]; ok {
+			continue
+		}
+		seenAlternatives[key] = struct{}{}
+		set.Alternatives = append(set.Alternatives, alternative)
+	}
+
+	return set, true
+}
+
+func scoreAuthAlternative(clientContent, configContent string, schemes map[string]openAPISecurityScheme, alternative []string) (int, bool) {
+	if len(alternative) == 0 {
+		return 0, false
+	}
+
+	total := 0
+	scoreableSchemes := 0
+	for _, key := range alternative {
+		scheme, ok := schemes[key]
+		if !ok {
+			continue
+		}
+		score, scoreable := scoreAuthScheme(clientContent, configContent, scheme)
+		if !scoreable {
+			continue
+		}
+		total += score
+		scoreableSchemes++
+	}
+	if scoreableSchemes == 0 {
+		return 0, false
+	}
+	return total / scoreableSchemes, true
+}
+
+func scoreAuthScheme(clientContent, configContent string, scheme openAPISecurityScheme) (int, bool) {
+	nameLower := strings.ToLower(scheme.Key)
+	headerName := "Authorization"
 	authHeaderMatched := false
 	headerNameMatched := false
 	queryMatched := false
 	envMatched := false
+	scoreable := false
+
+	if strings.EqualFold(scheme.Type, "apikey") && scheme.In == "header" && strings.TrimSpace(scheme.HeaderName) != "" {
+		headerName = scheme.HeaderName
+	}
 
 	switch {
-	case strings.Contains(strings.ToLower(spec.Auth.Format), "bot "):
+	case strings.Contains(nameLower, "bot"):
+		scoreable = true
 		if strings.Contains(clientContent, `"Bot "`) || strings.Contains(clientContent, "`Bot `") {
 			authHeaderMatched = true
 		}
-	case strings.EqualFold(spec.Auth.Type, "bearer_token"):
+	case strings.Contains(nameLower, "bearer") || (scheme.Type == "http" && scheme.Scheme == "bearer"):
+		scoreable = true
 		if strings.Contains(clientContent, `"Bearer "`) || strings.Contains(clientContent, "`Bearer `") {
 			authHeaderMatched = true
 		}
-	case strings.Contains(strings.ToLower(spec.Auth.Format), "basic "):
+	case strings.Contains(nameLower, "basic") || (scheme.Type == "http" && scheme.Scheme == "basic"):
+		scoreable = true
 		if strings.Contains(clientContent, `"Basic "`) || strings.Contains(clientContent, "`Basic `") {
 			authHeaderMatched = true
 		}
+	case strings.EqualFold(scheme.Type, "apikey"):
+		scoreable = true
+	case strings.EqualFold(scheme.Type, "oauth2"), strings.EqualFold(scheme.Type, "openidconnect"):
+		scoreable = true
+		if strings.Contains(clientContent, `"Bearer "`) || strings.Contains(clientContent, "`Bearer `") {
+			authHeaderMatched = true
+		}
+	}
+	if !scoreable {
+		return 0, false
 	}
 
-	headerName := spec.Auth.Header
-	if headerName == "" {
-		headerName = "Authorization"
-	}
 	if strings.Contains(clientContent, `Header.Set("`+headerName+`"`) ||
 		strings.Contains(clientContent, `Header.Add("`+headerName+`"`) {
 		headerNameMatched = true
 	}
 
-	if strings.EqualFold(spec.Auth.In, "query") &&
-		(strings.Contains(clientContent, ".Query()") || strings.Contains(clientContent, "url.Values") || strings.Contains(clientContent, "RawQuery")) {
+	if scheme.In == "query" && (strings.Contains(clientContent, ".Query()") || strings.Contains(clientContent, "url.Values") || strings.Contains(clientContent, "RawQuery")) {
 		queryMatched = true
 	}
 
-	for _, envVar := range spec.Auth.EnvVars {
-		if strings.Contains(strings.ToUpper(configContent), strings.ToUpper(envVar)) {
-			envMatched = true
-			break
-		}
+	envNeedle := sanitizeEnvName(scheme.Key)
+	if envNeedle != "" && strings.Contains(strings.ToUpper(configContent), envNeedle) {
+		envMatched = true
 	}
 
+	score := 0
 	if authHeaderMatched {
 		score += 3
 	}
@@ -948,7 +1191,16 @@ func scoreAuthProtocol(dir, specPath string) int {
 	if score > 10 {
 		score = 10
 	}
-	return score
+	return score, true
+}
+
+func isHTTPMethod(method string) bool {
+	switch strings.ToLower(method) {
+	case "get", "put", "post", "delete", "options", "head", "patch", "trace":
+		return true
+	default:
+		return false
+	}
 }
 
 func scoreDataPipelineIntegrity(dir string) int {
@@ -1388,8 +1640,12 @@ func computeGrade(percentage int) string {
 	}
 }
 
-func buildGapReport(s SteinerScore) []string {
+func buildGapReport(s SteinerScore, unscored []string) []string {
 	var gaps []string
+	unscoredSet := make(map[string]struct{}, len(unscored))
+	for _, name := range unscored {
+		unscoredSet[name] = struct{}{}
+	}
 	dimensions := []struct {
 		name  string
 		score int
@@ -1414,6 +1670,9 @@ func buildGapReport(s SteinerScore) []string {
 		{"dead_code", s.DeadCode},
 	}
 	for _, d := range dimensions {
+		if _, skip := unscoredSet[d.name]; skip {
+			continue
+		}
 		max := 10
 		if d.name == "type_fidelity" || d.name == "dead_code" {
 			max = 5
@@ -1472,6 +1731,9 @@ func writeScorecardMD(sc *Scorecard, pipelineDir string) error {
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("# Scorecard: %s\n\n", sc.APIName))
 	b.WriteString(fmt.Sprintf("**Overall Grade: %s** (%d%%)\n\n", sc.OverallGrade, sc.Steinberger.Percentage))
+	if len(sc.UnscoredDimensions) > 0 {
+		b.WriteString(fmt.Sprintf("Unscored dimensions omitted from the total denominator: %s\n\n", strings.Join(sc.UnscoredDimensions, ", ")))
+	}
 
 	// Steinberger dimensions table
 	b.WriteString("## Quality Dimensions\n\n")
@@ -1479,27 +1741,32 @@ func writeScorecardMD(sc *Scorecard, pipelineDir string) error {
 	b.WriteString("|-----------|-------|\n")
 	s := sc.Steinberger
 	dimensions := []struct {
-		name  string
-		score int
+		name    string
+		nameKey string
+		score   int
 	}{
-		{"Output Modes", s.OutputModes},
-		{"Auth", s.Auth},
-		{"Error Handling", s.ErrorHandling},
-		{"Terminal UX", s.TerminalUX},
-		{"README", s.README},
-		{"Doctor", s.Doctor},
-		{"Agent Native", s.AgentNative},
-		{"Local Cache", s.LocalCache},
-		{"Breadth", s.Breadth},
-		{"Vision", s.Vision},
-		{"Workflows", s.Workflows},
-		{"Insight", s.Insight},
-		{"Path Validity", s.PathValidity},
-		{"Auth Protocol", s.AuthProtocol},
-		{"Data Pipeline Integrity", s.DataPipelineIntegrity},
-		{"Sync Correctness", s.SyncCorrectness},
+		{"Output Modes", "output_modes", s.OutputModes},
+		{"Auth", "auth", s.Auth},
+		{"Error Handling", "error_handling", s.ErrorHandling},
+		{"Terminal UX", "terminal_ux", s.TerminalUX},
+		{"README", "readme", s.README},
+		{"Doctor", "doctor", s.Doctor},
+		{"Agent Native", "agent_native", s.AgentNative},
+		{"Local Cache", "local_cache", s.LocalCache},
+		{"Breadth", "breadth", s.Breadth},
+		{"Vision", "vision", s.Vision},
+		{"Workflows", "workflows", s.Workflows},
+		{"Insight", "insight", s.Insight},
+		{"Path Validity", "path_validity", s.PathValidity},
+		{"Auth Protocol", "auth_protocol", s.AuthProtocol},
+		{"Data Pipeline Integrity", "data_pipeline_integrity", s.DataPipelineIntegrity},
+		{"Sync Correctness", "sync_correctness", s.SyncCorrectness},
 	}
 	for _, d := range dimensions {
+		if sc.IsDimensionUnscored(d.nameKey) {
+			b.WriteString(fmt.Sprintf("| %s | N/A |\n", d.name))
+			continue
+		}
 		bar := strings.Repeat("#", d.score) + strings.Repeat(".", 10-d.score)
 		b.WriteString(fmt.Sprintf("| %s | %d/10 %s |\n", d.name, d.score, bar))
 	}

@@ -1,6 +1,7 @@
 ---
 title: "Steinberger scorecard scoring system: architecture, conventions, and modification rules"
 date: 2026-03-27
+last_updated: 2026-03-28
 category: best-practices
 module: internal/pipeline
 problem_type: best_practice
@@ -21,6 +22,7 @@ tags:
   - tier-weighting
   - best-practice
   - calibration
+  - unscored-dimensions
 ---
 
 # Steinberger scorecard: architecture, conventions, and modification rules
@@ -70,6 +72,29 @@ Total = tier1Normalized + tier2Normalized  // 0-100
 ```
 
 Each tier contributes exactly 50 points max. If you add a Tier 1 dimension, update the `120` constant. If you add a Tier 2 dimension, update the `50` constant.
+
+### Unscored dimensions
+
+Some dimensions are only valid when the source of truth contains the evidence needed to judge them. For example, `PathValidity` needs OpenAPI paths and `AuthProtocol` needs `securitySchemes`.
+
+If that evidence is missing, the dimension is **unscored**, not mediocre:
+
+```go
+type Scorecard struct {
+    UnscoredDimensions []string `json:"unscored_dimensions,omitempty"`
+}
+```
+
+Render unscored dimensions as `N/A`, omit them from gap reports, and remove their max points from the denominator before normalizing the tier:
+
+```go
+tier2Max := 50
+if sc.IsDimensionUnscored("path_validity") { tier2Max -= 10 }
+if sc.IsDimensionUnscored("auth_protocol") { tier2Max -= 10 }
+tier2Normalized := (tier2Raw * 50) / tier2Max
+```
+
+Do **not** encode "missing evidence" as a midpoint like `5/10`. A midpoint looks neutral in code review but still lowers the final score because it stays inside the denominator. That turns an epistemic unknown into a real product penalty.
 
 ### Grade thresholds
 
@@ -182,9 +207,11 @@ Six prefixes appear in both workflow and insight lists: `stale`, `conflicts`, `s
 
 8. **Structural detection complements prefix matching.** Don't rely solely on filename prefixes.
 
-9. **Update tier constants when adding dimensions.** Tier 1 constant is `120` (12 x 10). Tier 2 constant is `50`. Both live in the `RunScorecard` function.
+9. **Unknown evidence must become `N/A`, not a midpoint.** If the spec or other authority lacks the data needed to evaluate a dimension, mark it unscored, expose it in `unscored_dimensions`, skip it in gap reports, and remove its max points from the tier denominator.
 
-10. **Test every scoring function independently.** Each `score*()` function should have fixture-based tests covering: high score, low score, and dimension-specific edge cases.
+10. **Update tier constants when adding dimensions.** Tier 1 constant is `120` (12 x 10). Tier 2 constant is `50`. Both live in the `RunScorecard` function. If dimensions can become unscored, adjust the runtime denominator too.
+
+11. **Test every scoring function independently.** Each `score*()` function should have fixture-based tests covering: high score, low score, dimension-specific edge cases, and unscored/unknown states for evidence-dependent dimensions.
 
 For detailed examples of bugs caused by violating these rules, see `docs/solutions/logic-errors/scorecard-accuracy-broadened-pattern-matching-2026-03-27.md`.
 

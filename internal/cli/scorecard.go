@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/mvanhorn/cli-printing-press/internal/pipeline"
 	"github.com/spf13/cobra"
@@ -47,6 +48,13 @@ func newScorecardCmd() *cobra.Command {
 
 			// Human-readable output
 			s := sc.Steinberger
+			renderScore := func(name string, score, max int) string {
+				if sc.IsDimensionUnscored(name) {
+					return "N/A"
+				}
+				return fmt.Sprintf("%d/%d", score, max)
+			}
+
 			fmt.Printf("Quality Scorecard: %s\n\n", sc.APIName)
 			fmt.Printf("  Output Modes   %d/10\n", s.OutputModes)
 			fmt.Printf("  Auth           %d/10\n", s.Auth)
@@ -61,13 +69,16 @@ func newScorecardCmd() *cobra.Command {
 			fmt.Printf("  Workflows      %d/10\n", s.Workflows)
 			fmt.Printf("  Insight        %d/10\n", s.Insight)
 			fmt.Printf("\n  Domain Correctness\n")
-			fmt.Printf("  Path Validity          %d/10\n", s.PathValidity)
-			fmt.Printf("  Auth Protocol          %d/10\n", s.AuthProtocol)
+			fmt.Printf("  Path Validity          %s\n", renderScore("path_validity", s.PathValidity, 10))
+			fmt.Printf("  Auth Protocol          %s\n", renderScore("auth_protocol", s.AuthProtocol, 10))
 			fmt.Printf("  Data Pipeline Integrity %d/10\n", s.DataPipelineIntegrity)
 			fmt.Printf("  Sync Correctness       %d/10\n", s.SyncCorrectness)
 			fmt.Printf("  Type Fidelity          %d/5\n", s.TypeFidelity)
 			fmt.Printf("  Dead Code              %d/5\n", s.DeadCode)
 			fmt.Printf("\n  Total: %d/100 - Grade %s\n", s.Total, sc.OverallGrade)
+			if len(sc.UnscoredDimensions) > 0 {
+				fmt.Printf("  Note: omitted from denominator: %s\n", strings.Join(sc.UnscoredDimensions, ", "))
+			}
 
 			if len(sc.GapReport) > 0 {
 				fmt.Printf("\nGaps:\n")

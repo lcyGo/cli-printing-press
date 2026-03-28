@@ -1,8 +1,10 @@
 package pipeline
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -228,7 +230,9 @@ func runLinks() string {
   }
 }`)
 
-		assert.Equal(t, 10, scorePathValidity(dir, specPath))
+		spec, err := loadOpenAPISpec(specPath)
+		assert.NoError(t, err)
+		assert.Equal(t, 10, evaluatePathValidity(dir, spec).score)
 	})
 }
 
@@ -492,6 +496,354 @@ CREATE TABLE bookings (
 		sc, err := RunScorecard(dir, pipelineDir, "", nil)
 		assert.NoError(t, err)
 		assert.Empty(t, sc.Steinberger.CalibrationNote)
+	})
+}
+
+func TestRunScorecard_UnscoredSpecDimensions(t *testing.T) {
+	t.Run("no spec omits path and auth dimensions from scoring", func(t *testing.T) {
+		dir := t.TempDir()
+		writeScorecardFixture(t, dir, "internal/cli/links.go", `
+package cli
+
+func runLinks() string {
+	path := "/links"
+	return path
+}
+`)
+
+		pipelineDir := t.TempDir()
+		sc, err := RunScorecard(dir, pipelineDir, "", nil)
+		assert.NoError(t, err)
+		assert.ElementsMatch(t, []string{"path_validity", "auth_protocol"}, sc.UnscoredDimensions)
+		assert.NotContains(t, sc.GapReport, "path_validity scored 0/10 - needs improvement")
+		assert.NotContains(t, sc.GapReport, "auth_protocol scored 0/10 - needs improvement")
+	})
+
+	t.Run("missing security schemes renormalizes tier2 instead of treating auth as zero", func(t *testing.T) {
+		dir := t.TempDir()
+		writeScorecardFixture(t, dir, "internal/cli/links.go", `
+package cli
+
+func runLinks() string {
+	path := "/links"
+	return path
+}
+`)
+
+		specWithoutAuth := filepath.Join(dir, "spec-no-auth.json")
+		writeScorecardFixture(t, dir, "spec-no-auth.json", `{
+  "paths": {
+    "/links": {}
+  },
+  "components": {
+    "securitySchemes": {}
+  }
+}`)
+
+		specWithBearer := filepath.Join(dir, "spec-bearer.json")
+		writeScorecardFixture(t, dir, "spec-bearer.json", `{
+  "paths": {
+    "/links": {}
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    }
+  }
+}`)
+
+		pipelineNoAuth := t.TempDir()
+		scNoAuth, err := RunScorecard(dir, pipelineNoAuth, specWithoutAuth, nil)
+		assert.NoError(t, err)
+		assert.Contains(t, scNoAuth.UnscoredDimensions, "auth_protocol")
+
+		pipelineBearer := t.TempDir()
+		scBearer, err := RunScorecard(dir, pipelineBearer, specWithBearer, nil)
+		assert.NoError(t, err)
+		assert.NotContains(t, scBearer.UnscoredDimensions, "auth_protocol")
+
+		assert.Equal(t, scBearer.Steinberger.PathValidity, scNoAuth.Steinberger.PathValidity)
+		assert.Equal(t, scBearer.Steinberger.AuthProtocol, 0)
+		sharedTier2Raw := scBearer.Steinberger.PathValidity +
+			scBearer.Steinberger.DataPipelineIntegrity +
+			scBearer.Steinberger.SyncCorrectness +
+			scBearer.Steinberger.TypeFidelity +
+			scBearer.Steinberger.DeadCode
+		expectedDelta := (sharedTier2Raw * 50 / 40) - (sharedTier2Raw * 50 / 50)
+		assert.Equal(t, scBearer.Steinberger.Total+expectedDelta, scNoAuth.Steinberger.Total)
+	})
+
+	t.Run("unused declared security schemes leave auth unscored", func(t *testing.T) {
+		dir := t.TempDir()
+		writeScorecardFixture(t, dir, "internal/client/client.go", `
+package client
+
+func setAuth(req interface{ Header() map[string]string }) {}
+`)
+
+		specPath := filepath.Join(dir, "spec-unused-auth.json")
+		writeScorecardFixture(t, dir, "spec-unused-auth.json", `{
+  "paths": {
+    "/links": {
+      "get": {
+        "responses": {
+          "200": { "description": "ok" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    }
+  }
+}`)
+
+		pipelineDir := t.TempDir()
+		sc, err := RunScorecard(dir, pipelineDir, specPath, nil)
+		assert.NoError(t, err)
+		assert.Contains(t, sc.UnscoredDimensions, "auth_protocol")
+	})
+
+	t.Run("referenced oauth2 scheme remains scoreable", func(t *testing.T) {
+		dir := t.TempDir()
+		writeScorecardFixture(t, dir, "internal/client/client.go", `
+package client
+
+type request struct {
+	Header map[string]string
+}
+
+func setAuth(req *request, token string) {
+	req.Header = map[string]string{}
+	req.Header["Authorization"] = "Bearer " + token
+}
+`)
+
+		specPath := filepath.Join(dir, "spec-oauth.json")
+		writeScorecardFixture(t, dir, "spec-oauth.json", `{
+  "paths": {
+    "/links": {
+      "get": {
+        "security": [
+          {
+            "oauth": []
+          }
+        ],
+        "responses": {
+          "200": { "description": "ok" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "oauth": {
+        "type": "oauth2"
+      }
+    }
+  }
+}`)
+
+		pipelineDir := t.TempDir()
+		sc, err := RunScorecard(dir, pipelineDir, specPath, nil)
+		assert.NoError(t, err)
+		assert.NotContains(t, sc.UnscoredDimensions, "auth_protocol")
+		assert.Greater(t, sc.Steinberger.AuthProtocol, 0)
+	})
+
+	t.Run("anonymous alternative leaves auth unscored", func(t *testing.T) {
+		dir := t.TempDir()
+		writeScorecardFixture(t, dir, "internal/client/client.go", `
+package client
+
+type request struct {
+	Header map[string]string
+}
+
+func setAuth(req *request, token string) {
+	req.Header = map[string]string{}
+	req.Header["Authorization"] = "Bearer " + token
+}
+`)
+
+		specPath := filepath.Join(dir, "spec-optional-auth.json")
+		writeScorecardFixture(t, dir, "spec-optional-auth.json", `{
+  "paths": {
+    "/links": {
+      "get": {
+        "security": [
+          {},
+          {
+            "oauth": []
+          }
+        ],
+        "responses": {
+          "200": { "description": "ok" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "oauth": {
+        "type": "oauth2"
+      }
+    }
+  }
+}`)
+
+		pipelineDir := t.TempDir()
+		sc, err := RunScorecard(dir, pipelineDir, specPath, nil)
+		assert.NoError(t, err)
+		assert.Contains(t, sc.UnscoredDimensions, "auth_protocol")
+	})
+
+	t.Run("alternative auth schemes use best matching option", func(t *testing.T) {
+		dir := t.TempDir()
+		writeScorecardFixture(t, dir, "internal/client/client.go", `
+package client
+
+import "net/http"
+
+func setAuth(req *http.Request, token string) {
+	req.Header.Set("Authorization", "Bearer "+token)
+}
+`)
+
+		specPath := filepath.Join(dir, "spec-auth-alternatives.json")
+		writeScorecardFixture(t, dir, "spec-auth-alternatives.json", `{
+  "paths": {
+    "/links": {
+      "get": {
+        "security": [
+          {
+            "api_key": []
+          },
+          {
+            "oauth": []
+          }
+        ],
+        "responses": {
+          "200": { "description": "ok" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "api_key": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key"
+      },
+      "oauth": {
+        "type": "oauth2"
+      }
+    }
+  }
+}`)
+
+		pipelineDir := t.TempDir()
+		sc, err := RunScorecard(dir, pipelineDir, specPath, nil)
+		assert.NoError(t, err)
+		assert.NotContains(t, sc.UnscoredDimensions, "auth_protocol")
+		assert.GreaterOrEqual(t, sc.Steinberger.AuthProtocol, 3)
+	})
+
+	t.Run("operation security override can make inherited auth unscored", func(t *testing.T) {
+		dir := t.TempDir()
+		writeScorecardFixture(t, dir, "internal/client/client.go", `
+package client
+
+import "net/http"
+
+func setAuth(req *http.Request, token string) {
+	req.Header.Set("Authorization", "Bearer "+token)
+}
+`)
+
+		specPath := filepath.Join(dir, "spec-root-auth-operation-anon.json")
+		writeScorecardFixture(t, dir, "spec-root-auth-operation-anon.json", `{
+  "security": [
+    {
+      "oauth": []
+    }
+  ],
+  "paths": {
+    "/links": {
+      "get": {
+        "security": [],
+        "responses": {
+          "200": { "description": "ok" }
+        }
+      },
+      "post": {
+        "security": [
+          {}
+        ],
+        "responses": {
+          "200": { "description": "ok" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "oauth": {
+        "type": "oauth2"
+      }
+    }
+  }
+}`)
+
+		pipelineDir := t.TempDir()
+		sc, err := RunScorecard(dir, pipelineDir, specPath, nil)
+		assert.NoError(t, err)
+		assert.Contains(t, sc.UnscoredDimensions, "auth_protocol")
+	})
+
+	t.Run("invalid spec path returns an error instead of renormalizing", func(t *testing.T) {
+		dir := t.TempDir()
+		pipelineDir := t.TempDir()
+
+		_, err := RunScorecard(dir, pipelineDir, filepath.Join(dir, "missing-spec.json"), nil)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "reading spec")
+	})
+
+	t.Run("json output keeps numeric fields for backward compatibility", func(t *testing.T) {
+		dir := t.TempDir()
+		writeScorecardFixture(t, dir, "internal/cli/links.go", `
+package cli
+
+func runLinks() string {
+	path := "/links"
+	return path
+}
+`)
+
+		pipelineDir := t.TempDir()
+		sc, err := RunScorecard(dir, pipelineDir, "", nil)
+		assert.NoError(t, err)
+
+		data, err := json.Marshal(sc)
+		assert.NoError(t, err)
+		body := string(data)
+		assert.True(t, strings.Contains(body, `"path_validity":0`))
+		assert.True(t, strings.Contains(body, `"auth_protocol":0`))
+		assert.True(t, strings.Contains(body, `"unscored_dimensions":["path_validity","auth_protocol"]`))
 	})
 }
 
