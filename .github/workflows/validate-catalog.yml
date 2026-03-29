@@ -58,6 +58,19 @@ jobs:
             rm -rf /tmp/${NAME}-cli /tmp/spec-validate.yaml
           done
 
+  test-generator:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run generator tests
+        run: go test -p 2 ./internal/generator
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -68,5 +81,7 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Run all tests
-        run: go test -p 2 ./...
+      - name: Run non-generator tests
+        run: |
+          mapfile -t packages < <(go list ./... | grep -v '^github.com/mvanhorn/cli-printing-press/internal/generator$')
+          go test -p 2 "${packages[@]}"
