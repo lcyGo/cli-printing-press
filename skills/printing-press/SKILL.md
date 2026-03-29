@@ -115,13 +115,17 @@ Before doing anything else:
 # min-binary-version: 0.2.0
 if ! command -v printing-press >/dev/null 2>&1; then
   if [ -x "$HOME/go/bin/printing-press" ]; then
-    echo "printing-press found at ~/go/bin/printing-press but not on PATH."
-    echo "Add GOPATH/bin to your PATH:  export PATH=\"\$HOME/go/bin:\$PATH\""
+    export PATH="$HOME/go/bin:$PATH"
+    echo "Added ~/go/bin to PATH"
+  elif command -v go >/dev/null 2>&1; then
+    echo "printing-press not found. Installing..."
+    GOPRIVATE=github.com/mvanhorn/* go install github.com/mvanhorn/cli-printing-press/cmd/printing-press@latest
+    export PATH="$HOME/go/bin:$PATH"
   else
-    echo "printing-press binary not found."
-    echo "Install with:  go install github.com/mvanhorn/cli-printing-press/cmd/printing-press@latest"
+    echo "printing-press binary not found and Go is not installed."
+    echo "Install Go first, then run:  go install github.com/mvanhorn/cli-printing-press/cmd/printing-press@latest"
+    return 1 2>/dev/null || exit 1
   fi
-  return 1 2>/dev/null || exit 1
 fi
 
 # Derive scope: prefer git repo root, fall back to CWD
