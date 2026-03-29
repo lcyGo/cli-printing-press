@@ -205,6 +205,8 @@ func writeCLIManifestForPublish(state *PipelineState, dir string) error {
 	// Look up catalog entry by API name; empty string if not found.
 	if entry, err := catalogpkg.LookupFS(catalog.FS, state.APIName); err == nil {
 		m.CatalogEntry = entry.Name
+		m.Category = entry.Category
+		m.Description = entry.Description
 	}
 
 	return WriteCLIManifest(dir, m)

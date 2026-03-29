@@ -29,6 +29,8 @@ func TestWriteCLIManifest(t *testing.T) {
 		SpecChecksum:         "sha256:abc123",
 		RunID:                "20260328T150405Z-abcd1234",
 		CatalogEntry:         "notion",
+		Category:             "productivity",
+		Description:          "Notion workspace API",
 	}
 
 	err := WriteCLIManifest(dir, m)
@@ -50,6 +52,8 @@ func TestWriteCLIManifest(t *testing.T) {
 	assert.Equal(t, "sha256:abc123", got.SpecChecksum)
 	assert.Equal(t, "20260328T150405Z-abcd1234", got.RunID)
 	assert.Equal(t, "notion", got.CatalogEntry)
+	assert.Equal(t, "productivity", got.Category)
+	assert.Equal(t, "Notion workspace API", got.Description)
 	assert.Equal(t, m.GeneratedAt, got.GeneratedAt)
 }
 
@@ -96,6 +100,12 @@ func TestWriteCLIManifestOmitsEmptyOptionalFields(t *testing.T) {
 
 	_, hasSpecPath := raw["spec_path"]
 	assert.False(t, hasSpecPath, "spec_path should be omitted when empty")
+
+	_, hasCategory := raw["category"]
+	assert.False(t, hasCategory, "category should be omitted when empty")
+
+	_, hasDescription := raw["description"]
+	assert.False(t, hasDescription, "description should be omitted when empty")
 }
 
 func TestWriteCLIManifestNonexistentDir(t *testing.T) {

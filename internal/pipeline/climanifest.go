@@ -31,6 +31,8 @@ type CLIManifest struct {
 	SpecChecksum         string    `json:"spec_checksum,omitempty"`
 	RunID                string    `json:"run_id,omitempty"`
 	CatalogEntry         string    `json:"catalog_entry,omitempty"`
+	Category             string    `json:"category,omitempty"`
+	Description          string    `json:"description,omitempty"`
 }
 
 // WriteCLIManifest marshals m as indented JSON and writes it to
