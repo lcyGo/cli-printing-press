@@ -98,8 +98,8 @@ func TestPrintingPressSkillUsesRunRootStateFile(t *testing.T) {
 func TestPrintingPressSkillExamplesUseCurrentCLINaming(t *testing.T) {
 	skill := readContractFile(t, filepath.Join("..", "..", "skills", "printing-press", "SKILL.md"))
 
-	assert.Contains(t, skill, "/printing-press emboss ./discord-pp-cli")
-	assert.NotContains(t, skill, "/printing-press emboss ./discord-cli")
+	assert.Contains(t, skill, "/printing-press emboss notion-pp-cli")
+	assert.NotContains(t, skill, "/printing-press emboss notion-cli")
 	assert.Contains(t, skill, "discord-pp-cli/internal/store/store.go")
 	assert.NotContains(t, skill, "discord-cli/internal/store/store.go")
 	assert.Contains(t, skill, "linear-pp-cli stale --days 30 --team ENG")

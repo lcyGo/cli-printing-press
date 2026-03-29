@@ -11,6 +11,79 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestResolveEmbossTarget(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PRINTING_PRESS_HOME", home)
+
+	libraryDir := filepath.Join(home, "library")
+	require.NoError(t, os.MkdirAll(filepath.Join(libraryDir, "notion-pp-cli"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(libraryDir, "discord-pp-cli"), 0o755))
+
+	tests := []struct {
+		name    string
+		flagDir string
+		args    []string
+		want    string
+		wantErr string
+	}{
+		{
+			name:    "flag only",
+			flagDir: "/some/path",
+			args:    nil,
+			want:    "/some/path",
+		},
+		{
+			name:    "positional path with separator",
+			flagDir: "",
+			args:    []string{"~/printing-press/library/notion-pp-cli"},
+			want:    "~/printing-press/library/notion-pp-cli",
+		},
+		{
+			name:    "exact name match",
+			flagDir: "",
+			args:    []string{"notion-pp-cli"},
+			want:    filepath.Join(libraryDir, "notion-pp-cli"),
+		},
+		{
+			name:    "bare name with suffix added",
+			flagDir: "",
+			args:    []string{"discord"},
+			want:    filepath.Join(libraryDir, "discord-pp-cli"),
+		},
+		{
+			name:    "no match",
+			flagDir: "",
+			args:    []string{"nonexistent"},
+			wantErr: `no CLI named "nonexistent" found`,
+		},
+		{
+			name:    "both flag and arg errors",
+			flagDir: "/some/path",
+			args:    []string{"notion-pp-cli"},
+			wantErr: "specify either a positional argument or --dir, not both",
+		},
+		{
+			name:    "neither flag nor arg errors",
+			flagDir: "",
+			args:    nil,
+			wantErr: "specify a CLI name or path",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolveEmbossTarget(tt.flagDir, tt.args)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.want, got)
+			}
+		})
+	}
+}
+
 func TestWriteEmbossDeltaReportWritesToScopedProofsDir(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("PRINTING_PRESS_HOME", home)

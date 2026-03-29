@@ -24,7 +24,8 @@ Generate the best useful CLI for an API without burning an hour on phase theater
 /printing-press Notion
 /printing-press Discord codex
 /printing-press --spec ./openapi.yaml
-/printing-press emboss ./discord-pp-cli
+/printing-press emboss notion
+/printing-press emboss notion-pp-cli
 /printing-press emboss ~/printing-press/library/notion-pp-cli
 ```
 
@@ -72,14 +73,16 @@ If Codex fails 3 times in a row, stop delegating and finish locally.
 If the arguments start with `emboss`, this is a second-pass improvement cycle for an existing generated CLI.
 
 ```bash
+/printing-press emboss notion-pp-cli
+/printing-press emboss notion
 /printing-press emboss ~/printing-press/library/notion-pp-cli
 ```
 
-Use the built-in audit command:
+#### Emboss Name Resolution
 
-```bash
-printing-press emboss --dir <cli-dir> --spec <spec-path> --audit-only
-```
+The CLI accepts a name or path directly (`printing-press emboss notion`). If the CLI errors with "no CLI named X found," search `$PRESS_LIBRARY/` for close matches and use `AskUserQuestion` to let the user pick. Show at most 4 matches, sorted by directory modification time (most recent first), with human-friendly relative timestamps (e.g. "generated 2 hours ago").
+
+#### Emboss Cycle
 
 Emboss is:
 1. audit baseline

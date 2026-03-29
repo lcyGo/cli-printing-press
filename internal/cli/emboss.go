@@ -53,9 +53,12 @@ func newEmbossCmd() *cobra.Command {
 	var keepBaseline bool
 
 	cmd := &cobra.Command{
-		Use:   "emboss",
+		Use:   "emboss [name-or-path]",
 		Short: "Second-pass improvement cycle for an existing generated CLI",
 		Long: `Run the emboss cycle on an already-generated CLI to make it better.
+
+Accepts a CLI name (e.g. notion-pp-cli or just notion) or a full path.
+Names are looked up in ~/printing-press/library/.
 
 Step 1: AUDIT - Run verify + scorecard to get a baseline
 Step 2: RE-RESEARCH - (skill-driven) Find what's new since v1
@@ -66,14 +69,26 @@ Step 6: REPORT - Output the delta
 
 Use --audit-only to just get the baseline without making changes.
 The improvement steps (2-4) are driven by the /printing-press emboss skill.`,
-		Example: `  # Full emboss cycle (audit -> improve -> re-verify)
-  # Run the skill: /printing-press emboss ./discord-pp-cli
-  # Or just get the baseline:
+		Example: `  # By name (looked up in ~/printing-press/library/)
+  printing-press emboss notion-pp-cli
+  printing-press emboss notion
+
+  # By path
+  printing-press emboss ~/printing-press/library/notion-pp-cli
+  printing-press emboss ./discord-pp-cli
+
+  # With --dir flag (backward compatible)
   printing-press emboss --dir ./discord-pp-cli --spec /tmp/spec.json --audit-only
 
   # Audit with live API testing
   printing-press emboss --dir ./discord-pp-cli --spec /tmp/spec.json --api-key $TOKEN --audit-only`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			resolved, err := resolveEmbossTarget(dir, args)
+			if err != nil {
+				return err
+			}
+			dir = resolved
 			workingDir, baselinePath, _, err := resolveEmbossWorkspace(dir)
 			if err != nil {
 				return err
@@ -149,7 +164,7 @@ The improvement steps (2-4) are driven by the /printing-press emboss skill.`,
 		},
 	}
 
-	cmd.Flags().StringVar(&dir, "dir", "", "Path to the generated CLI directory (required)")
+	cmd.Flags().StringVar(&dir, "dir", "", "Path to the generated CLI directory (alternative to positional arg)")
 	cmd.Flags().StringVar(&specPath, "spec", "", "Path to the OpenAPI spec file")
 	cmd.Flags().StringVar(&apiKey, "api-key", "", "API key for live testing (read-only GETs only)")
 	cmd.Flags().StringVar(&envVar, "env-var", "", "Environment variable name for the API key")
@@ -157,8 +172,49 @@ The improvement steps (2-4) are driven by the /printing-press emboss skill.`,
 	cmd.Flags().BoolVar(&auditOnly, "audit-only", false, "Only run the baseline audit, no improvements")
 	cmd.Flags().BoolVar(&saveBaseline, "save-baseline", false, "Save the baseline report to disk for a future delta run")
 	cmd.Flags().BoolVar(&keepBaseline, "keep-baseline", false, "Keep the saved baseline after computing a delta")
-	_ = cmd.MarkFlagRequired("dir")
 	return cmd
+}
+
+// resolveEmbossTarget merges the --dir flag and the optional positional arg
+// into a single directory path. A bare name (no path separators, doesn't exist
+// on disk) is looked up in ~/printing-press/library/ — first as-is, then with
+// the -pp-cli suffix appended.
+func resolveEmbossTarget(flagDir string, args []string) (string, error) {
+	switch {
+	case flagDir != "" && len(args) > 0:
+		return "", fmt.Errorf("specify either a positional argument or --dir, not both")
+	case flagDir != "":
+		return flagDir, nil
+	case len(args) > 0:
+		target := args[0]
+
+		// If it contains a path separator or exists on disk, treat as a path.
+		if strings.ContainsRune(target, filepath.Separator) || strings.HasPrefix(target, "~") {
+			return target, nil
+		}
+		if _, err := os.Stat(target); err == nil {
+			return target, nil
+		}
+
+		// Bare name — look up in the library.
+		libraryRoot := pipeline.PublishedLibraryRoot()
+		candidate := filepath.Join(libraryRoot, target)
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			return candidate, nil
+		}
+
+		// Try with -pp-cli suffix.
+		if !strings.HasSuffix(target, naming.CurrentCLISuffix) {
+			candidate = filepath.Join(libraryRoot, naming.CLI(target))
+			if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+				return candidate, nil
+			}
+		}
+
+		return "", fmt.Errorf("no CLI named %q found in %s", target, libraryRoot)
+	default:
+		return "", fmt.Errorf("specify a CLI name or path (e.g. printing-press emboss notion)")
+	}
 }
 
 func resolveEmbossWorkspace(dir string) (string, string, *pipeline.PipelineState, error) {
