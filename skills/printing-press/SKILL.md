@@ -191,6 +191,29 @@ Token detection:
 
 If a token is available, ask once whether to use it for read-only live testing at the end. Do not block the build on token collection.
 
+### Sniff Gate
+
+After resolving the spec source, evaluate whether to offer sniff-based API discovery:
+
+| Spec found? | Research shows gaps? | No-auth API? | Action |
+|-------------|---------------------|--------------|--------|
+| No | N/A | Yes | **Offer sniff as primary source**: "No official API spec found for `<API>`. Want me to sniff `<likely-url>` to discover the API from live traffic? You can export a HAR file from your browser's DevTools, or I can use `agent-browser` to capture traffic." |
+| No | N/A | No (requires login) | Fall back to `--docs` mode with community documentation |
+| Yes | Yes (docs show more endpoints) | Yes | **Offer sniff as enrichment**: "Found a spec with N endpoints, but research shows M+ in docs/community tools. Want me to sniff the live site to discover what the spec missed?" |
+| Yes | No (spec looks complete) | Any | Skip sniff silently |
+
+Use `AskUserQuestion` to present the choice. Options:
+1. **Sniff (Recommended)** — Export a HAR file or use agent-browser to capture traffic, then run `printing-press sniff --har <file>` to generate a spec
+2. **Use community docs** — Proceed with `--docs` mode from documented endpoints
+3. **Skip** — Continue with whatever spec was found (or abort if none)
+
+If the user provides a HAR file or approves agent-browser capture:
+1. Run `printing-press sniff --har <capture-path> --name <api>` to generate a spec
+2. If enrichment mode: pass both specs to Phase 2 (`generate --spec <original> --spec <sniff-spec>`)
+3. If primary mode: pass sniff spec to Phase 2
+
+Sniff is always optional and never blocking. If the user declines, proceed with existing sources.
+
 ## Phase 1: Research Brief
 
 Write one build-driving brief, not a stack of phase essays.
