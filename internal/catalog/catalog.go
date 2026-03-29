@@ -27,9 +27,10 @@ var validCategories = map[string]struct{}{
 	"auth":                 {},
 	"commerce":             {},
 	"ai":                   {},
-	"devices":              {},
-	"other":                {},
-	"example":              {},
+	"media-and-entertainment": {},
+	"devices":                {},
+	"other":                  {},
+	"example":                {},
 }
 
 var validSpecFormats = map[string]struct{}{
@@ -142,7 +143,7 @@ func (e *Entry) Validate() error {
 		return fmt.Errorf("category is required")
 	}
 	if _, ok := validCategories[e.Category]; !ok {
-		return fmt.Errorf("category must be one of: developer-tools, monitoring, cloud, project-management, productivity, social-and-messaging, sales-and-crm, marketing, payments, auth, commerce, ai, devices, other")
+		return fmt.Errorf("category must be one of: developer-tools, monitoring, cloud, project-management, productivity, social-and-messaging, sales-and-crm, marketing, payments, auth, commerce, ai, media-and-entertainment, devices, other")
 	}
 	if e.SpecURL == "" {
 		return fmt.Errorf("spec_url is required")

@@ -1,7 +1,7 @@
 ---
 title: "feat: Add publish skill to ship CLIs to printing-press-library"
 type: feat
-status: active
+status: completed
 date: 2026-03-29
 origin: docs/brainstorms/2026-03-29-publish-skill-requirements.md
 ---
@@ -18,7 +18,7 @@ Users generate CLIs with the printing press and they land in `~/printing-press/l
 
 ## Requirements Trace
 
-- R1-R2. 14-category single-level taxonomy with `other` catch-all
+- R1-R2. 15-category single-level taxonomy with `other` catch-all
 - R3. Catalog `validCategories` updated; all 17 YAML files reassigned
 - R4. `category` field added to `.printing-press.json` manifest
 - R4a. `description` field added to `.printing-press.json` manifest (one-liner, canonical source)
@@ -136,7 +136,7 @@ Step 5 (Skill): Git + PR
 
 ## Implementation Units
 
-- [ ] **Unit 1: Expand catalog taxonomy to 14 categories**
+- [x] **Unit 1: Expand catalog taxonomy to 14 categories**
 
 **Goal:** Update `validCategories` to the new 14-category taxonomy and reassign all catalog YAML files.
 
@@ -176,7 +176,7 @@ Step 5 (Skill): Git + PR
 
 ---
 
-- [ ] **Unit 2: Add `category` and `description` fields to CLIManifest**
+- [x] **Unit 2: Add `category` and `description` fields to CLIManifest**
 
 **Goal:** Add `Category` and `Description` to the `CLIManifest` struct and populate them during CLI publishing.
 
@@ -213,7 +213,7 @@ Step 5 (Skill): Git + PR
 
 ---
 
-- [ ] **Unit 3: Add `library list` command**
+- [x] **Unit 3: Add `library list` command**
 
 **Goal:** Add a `printing-press library list` command that lists all CLIs in the local library with manifest metadata.
 
@@ -254,7 +254,7 @@ Step 5 (Skill): Git + PR
 
 ---
 
-- [ ] **Unit 4: Add `publish validate` and `publish package` commands**
+- [x] **Unit 4: Add `publish validate` and `publish package` commands**
 
 **Goal:** Add `printing-press publish validate` and `printing-press publish package` commands for pre-publish validation and package assembly.
 
@@ -315,7 +315,7 @@ Step 5 (Skill): Git + PR
 
 ---
 
-- [ ] **Unit 5: Scaffold printing-press-library repo**
+- [x] **Unit 5: Scaffold printing-press-library repo**
 
 **Goal:** Set up the printing-press-library repo at `~/Code/printing-press-library` with the correct directory structure, README, CONTRIBUTING.md, .gitignore, and empty registry.json.
 
@@ -353,7 +353,7 @@ Step 5 (Skill): Git + PR
 
 ---
 
-- [ ] **Unit 6: Create printing-press-publish skill**
+- [x] **Unit 6: Create printing-press-publish skill**
 
 **Goal:** Create the `/printing-press publish` skill that orchestrates the full publish flow: name resolution, category assignment, validation, packaging, managed clone, and PR creation.
 

@@ -130,7 +130,8 @@ func TestAllPublicCategoriesAreValid(t *testing.T) {
 	publicCategories := []string{
 		"developer-tools", "monitoring", "cloud", "project-management",
 		"productivity", "social-and-messaging", "sales-and-crm", "marketing",
-		"payments", "auth", "commerce", "ai", "devices", "other",
+		"payments", "auth", "commerce", "ai", "media-and-entertainment",
+		"devices", "other",
 	}
 	base := Entry{
 		Name:        "test-api",
