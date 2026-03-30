@@ -773,6 +773,7 @@ printing-press generate \
   --spec "$RESEARCH_DIR/<api>-sniff-spec.yaml" \
   --name <api> \
   --output "$PRESS_LIBRARY/<api>-pp-cli" \
+  --spec-source sniffed \
   --force --lenient --validate
 ```
 
@@ -782,6 +783,7 @@ Sniff-only (no original spec, sniff was the primary source):
 printing-press generate \
   --spec "$RESEARCH_DIR/<api>-sniff-spec.yaml" \
   --output "$PRESS_LIBRARY/<api>-pp-cli" \
+  --spec-source sniffed \
   --force --lenient --validate
 ```
 
@@ -800,6 +802,15 @@ GraphQL-only APIs:
 - Build real commands in Phase 3 using a GraphQL client wrapper
 
 After generation:
+
+**REQUIRED: Rewrite the CLI description.** The generator copies the spec's `description` field
+as the CLI's `Short` help text. Spec descriptions describe the *API* ("Payment processing API")
+but CLI help should describe what the *CLI does* ("Manage payments, subscriptions, and invoices
+via the Stripe API"). Open `$PRESS_LIBRARY/<api>-pp-cli/internal/cli/root.go`, find the
+`Short:` field on the root cobra command, and rewrite it as a concise, user-facing description
+of the CLI's purpose. Use the product thesis from the Phase 1 brief to inform the rewrite.
+
+Then:
 - note skipped complex body fields
 - fix only blocking generation failures here
 - do not start broad polish work yet
