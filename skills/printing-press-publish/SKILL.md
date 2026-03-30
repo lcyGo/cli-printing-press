@@ -422,6 +422,7 @@ $ <cli-name> --help
 **If updating an existing PR** (`EXISTING_PR_NUMBER` is set):
 
 ```bash
+cd "$PUBLISH_REPO_DIR"
 gh pr edit "$EXISTING_PR_NUMBER" \
   --repo mvanhorn/printing-press-library \
   --body "<constructed PR body>"
@@ -432,6 +433,7 @@ Display: "Updated PR #N: <EXISTING_PR_URL>"
 **If creating a new PR:**
 
 ```bash
+cd "$PUBLISH_REPO_DIR"
 gh pr create \
   --repo mvanhorn/printing-press-library \
   --title "feat(<api-name>): add <cli-name>" \
