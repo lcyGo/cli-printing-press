@@ -387,7 +387,27 @@ Safety: GET only, --limit 1, 10s timeout, stops on 401. Never creates, posts, or
 
 ## Development
 
-After cloning, install git hooks so lint errors are caught before they reach CI:
+### Build locally
+
+```bash
+go build -o ./printing-press ./cmd/printing-press
+```
+
+Always use `./printing-press` (relative path). Multiple worktrees may run concurrently - absolute paths like `/tmp/printing-press` will collide.
+
+### Use local skills
+
+The repo is a Claude Code plugin. To test your local skill changes instead of the marketplace version:
+
+```bash
+claude --plugin-dir .
+```
+
+This loads skills, agents, and hooks from your working copy. Inside the session, `/printing-press` runs your local `SKILL.md`, not the installed marketplace version. After editing a skill, run `/reload-plugins` to pick up changes without restarting.
+
+### Lint setup
+
+Install git hooks so lint errors are caught before they reach CI:
 
 ```bash
 brew install lefthook
@@ -396,14 +416,14 @@ lefthook install
 
 This adds a pre-push hook that runs `golangci-lint` on changed files. The same linter config (`.golangci.yml`) runs in CI - lefthook just catches failures locally first.
 
-If you also want `golangci-lint` locally:
+If you also want `golangci-lint` locally (v2 required — the config uses `version: "2"`):
 
 ```bash
 # macOS
 brew install golangci-lint
 
-# or via go
-go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+# or via the official install script
+curl -sSfL https://golangci-lint.run/install.sh | sh -s -- -b $(go env GOPATH)/bin
 ```
 
 ## Credits
