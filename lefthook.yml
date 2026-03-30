@@ -1,5 +1,9 @@
 pre-push:
   commands:
+    fmt:
+      glob: "*.go"
+      run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      fail_text: "gofmt failed. Run 'gofmt -w .' to fix."
     lint:
       glob: "*.go"
       run: golangci-lint run --new-from-rev=origin/main ./...
