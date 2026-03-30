@@ -14,6 +14,7 @@ type TableDef struct {
 	FTS5         bool
 	FTS5Fields   []string
 	FTS5Triggers bool
+	Gravity      int
 }
 
 type ColumnDef struct {
@@ -41,7 +42,8 @@ func BuildSchema(s *spec.APISpec) []TableDef {
 		tableName := toSnakeCase(name)
 
 		table := TableDef{
-			Name: tableName,
+			Name:    tableName,
+			Gravity: gravity,
 			Columns: []ColumnDef{
 				{Name: "id", Type: "TEXT", PrimaryKey: true},
 				{Name: "data", Type: "JSON", NotNull: true},
