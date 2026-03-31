@@ -353,6 +353,7 @@ The brief must answer:
 Research checklist:
 - Find the spec or docs source
 - Find the top 1-2 competitors
+- **Check GitHub issues on the top wrapper/SDK repo for "403", "blocked", "broken", "deprecated", "rate limit".** If multiple issues report the API is inaccessible or broken, flag this in the research brief as a reachability risk. This is critical for unofficial/reverse-engineered APIs.
 - Find official and popular SDK wrappers on npm (`site:npmjs.com`) and PyPI (`site:pypi.org`)
 - Find 2-3 concrete user pain points
 - Identify the highest-gravity entities
@@ -379,6 +380,9 @@ Suggested shape:
 - Domain:
 - Users:
 - Data profile:
+
+## Reachability Risk
+- [None / Low / High] [evidence: e.g., "6 open issues on reteps/redfin about 403 errors since 2025"]
 
 ## Top Workflows
 1. ...
@@ -1008,6 +1012,59 @@ If user selects **"Add your own feature ideas"**, ask 3 structured questions tar
 
 Each answer that produces a concrete feature → score and add to the transcendence table. After the brainstorm, return to this gate with the updated manifest.
 WAIT for approval. Do NOT generate until approved.
+
+---
+
+## Phase 1.9: API Reachability Gate
+
+**MANDATORY. Do NOT skip this phase. Do NOT proceed to Phase 2 without running this check.**
+
+Before spending tokens on generation, verify the API actually responds to programmatic requests. One real HTTP call. If it fails, STOP.
+
+### The Check
+
+Pick the simplest GET endpoint from the resolved spec (no required params, no auth if possible). If no such endpoint exists, use the spec's base URL. Run one HTTP request:
+
+```bash
+curl -s -o /dev/null -w "%{http_code}" -m 10 "<base_url>/<simplest_get_path>" 2>/dev/null
+```
+
+Or use `WebFetch` if curl is unavailable. The goal is one real response code.
+
+### Decision Matrix
+
+| Result | Sniff gate failed? | Research found 403 issues? | Action |
+|--------|-------------------|---------------------------|--------|
+| 2xx/3xx | Any | Any | **PASS** - proceed to Phase 2 |
+| 401 (no key provided) | No | No | **PASS** - expected when API needs auth and user declined key gate |
+| 403 with HTML/bot detection | Any | Any | **HARD STOP** |
+| 403 | Yes (bot detection) | Any | **HARD STOP** |
+| 403 | No | Yes (issues found) | **HARD STOP** |
+| 403 | No | No | **WARN** - ask user |
+| Timeout/DNS/connection refused | Any | Any | **WARN** - ask user |
+
+### On HARD STOP
+
+Present via `AskUserQuestion`:
+
+> "WARNING: `<API>` appears to block programmatic access. [what failed: e.g., 'HTTP 403 with HTML error page', 'sniff gate failed with bot detection', 'reteps/redfin has 6+ issues about 403 errors']. Building a CLI against an unreachable API wastes time and tokens."
+>
+> 1. **Try anyway** - proceed knowing the CLI may not work against the live API
+> 2. **Pick a different API** - start over
+> 3. **Done** - stop here
+
+### On WARN
+
+Present via `AskUserQuestion`:
+
+> "The API returned [error]. This might be temporary, or it might mean programmatic access is blocked. Want to proceed?"
+>
+> 1. **Yes - proceed** - generate the CLI anyway
+> 2. **No - stop** - pick a different API or provide a spec manually
+
+### On PASS
+
+Proceed silently to Phase 2.
 
 ---
 
