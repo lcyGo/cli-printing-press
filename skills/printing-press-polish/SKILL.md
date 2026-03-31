@@ -73,6 +73,14 @@ CLI_NAME="$(basename "$CLI_DIR")"
 
 # Verify it's a valid Go CLI
 if [ ! -f "$CLI_DIR/go.mod" ]; then
+  # Check if there's an active build in progress for this CLI
+  _cli_base="$(basename "$CLI_DIR")"
+  _lock_json=$(printing-press lock status --cli "$_cli_base" --json 2>/dev/null)
+  if echo "$_lock_json" | grep -q '"held":true'; then
+    echo "CLI not in library yet — an active build is in progress."
+    echo "Wait for the build to finish and promote, then run polish."
+    exit 1
+  fi
   echo "Not a valid CLI directory: $CLI_DIR"
   exit 1
 fi

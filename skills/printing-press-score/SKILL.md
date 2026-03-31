@@ -2,7 +2,7 @@
 name: printing-press-score
 description: Score a generated CLI against the Steinberger bar, compare two CLIs side-by-side
 version: 0.1.0
-min-binary-version: "0.2.0"
+min-binary-version: "0.3.0"
 allowed-tools:
   - Bash
   - Read
@@ -35,7 +35,7 @@ Before any other commands, run the setup contract to verify the printing-press b
 
 <!-- PRESS_SETUP_CONTRACT_START -->
 ```bash
-# min-binary-version: 0.2.0
+# min-binary-version: 0.3.0
 if ! command -v printing-press >/dev/null 2>&1; then
   if [ -x "$HOME/go/bin/printing-press" ]; then
     echo "printing-press found at ~/go/bin/printing-press but not on PATH."
