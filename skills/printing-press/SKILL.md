@@ -970,9 +970,14 @@ Analyze these 5 categories using data already gathered — do NOT run new search
 
 5. **Agent workflow gaps** — What would an AI agent using this CLI wish it could do in one command instead of multiple? (e.g., "show me everything about X" commands, bulk operations, pre-flight checks)
 
+6. **Self-brainstorm** — Answer these 3 questions using the research context gathered so far. Do NOT ask the user — answer them yourself from the research brief, absorb manifest, and ecosystem findings:
+   - Based on the research brief's top workflows and user profiles, what workflows does the typical power user of this API do that aren't covered in the absorbed features?
+   - Based on competitor repo issues, community pain points, and ecosystem gaps found in Phase 1/1.5, what are the most annoying limitations that a CLI with SQLite could fix?
+   - Based on the NOI and domain archetype, what single "killer feature" would make a power user install this CLI over any alternative?
+
 #### Generate and Score Candidates
 
-Generate 3-5 novel feature ideas. For each, score on 4 dimensions:
+Generate 3-8 novel feature ideas (across all 6 categories). For each, score on 4 dimensions:
 
 | Dimension | Points | Scoring |
 |-----------|--------|---------|
@@ -999,27 +1004,27 @@ The "Evidence" column MUST cite specific findings from Phase 1 or Phase 1.5 rese
 
 Write to `$RESEARCH_DIR/<stamp>-feat-<api>-pp-cli-absorb-manifest.md`
 
-The manifest now includes both compound use cases (Step 1.5c) and auto-suggested features (Step 1.5c.5) in the transcendence table.
+The manifest now includes compound use cases (Step 1.5c) and auto-suggested + auto-brainstormed features (Step 1.5c.5) in the transcendence table.
 
 ### Phase Gate 1.5
 
 **STOP.** Present the absorb manifest to the user via `AskUserQuestion`:
 
-"Found [N] features across [X] tools (MCPs, skills, CLIs, scripts). Our CLI will absorb all [N] and add [M] transcendence features ([K] auto-suggested with scores). Total: [N+M] features. This is [Z]% more than the best existing tool."
+"Found [N] features across [X] tools (MCPs, skills, CLIs, scripts). Our CLI will absorb all [N] and add [M] transcendence features (auto-suggested and brainstormed with scores). Total: [N+M] features. This is [Z]% more than the best existing tool."
 
 Options:
-1. **Approve — generate now** — Start CLI generation with the full manifest
-2. **Brainstorm more features** — Interactive dialogue to explore your own feature ideas before building
+1. **Approve - generate now** — Start CLI generation with the full manifest
+2. **Add your own feature ideas** — Add features from your personal experience that research couldn't surface
 3. **Review the research** — Show me the full brief and manifest before deciding
 4. **Trim scope** — The feature count is too ambitious, let's focus on a subset
 
-If user selects **"Brainstorm more features"**, run a lightweight feature brainstorm:
+If user selects **"Add your own feature ideas"**, ask 3 structured questions targeting personal knowledge the research couldn't surface:
 
-1. "What workflows do you personally use `<API>` for that aren't covered in the manifest?"
-2. "What's annoying about existing tools for `<API>` that you wish someone would fix?"
-3. "If this CLI could do one magical thing, what would make you say 'I need this'?"
+1. "What workflows do YOU personally use `<API>` for that we might have missed?"
+2. "What frustrates YOU about this API that the research didn't surface?"
+3. "What's YOUR killer feature - something only you'd think of?"
 
-Each answer that produces a concrete feature → add to the transcendence table. After the brainstorm, return to this gate with the updated manifest.
+Each answer that produces a concrete feature → score and add to the transcendence table. After the brainstorm, return to this gate with the updated manifest.
 WAIT for approval. Do NOT generate until approved.
 
 ---
