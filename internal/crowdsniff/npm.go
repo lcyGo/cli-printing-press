@@ -633,7 +633,7 @@ var (
 
 	// markdownLinkKeyURLPattern matches markdown links with key-related anchor text.
 	// E.g., [Get your API key](https://example.com/keys)
-	markdownLinkKeyURLPattern = regexp.MustCompile(`(?i)\[(?:[^\]]*(?:api\s*key|register|sign\s*up|developer\s+portal|get\s+(?:your\s+)?key)[^\]]*)\]\((https://[^)]+)\)`)
+	markdownLinkKeyURLPattern = regexp.MustCompile(`(?i)\[(?:[^\]]*(?:api\s*key|register|sign\s*up|developer\s+portal|get\s+(?:your\s+)?key)[^\]]*)\]\((https://[^)"\s]+)\)`)
 
 	// badgeURLDomains are domains used for npm badges — never useful as key URLs.
 	badgeURLDomains = []string{
@@ -708,8 +708,9 @@ func extractKeyURL(readmeContent string, apiName string) string {
 			return rawURL
 		}
 
-		// Accept if on a known developer platform domain.
-		if isKnownDevPlatform(host) {
+		// Accept if on a known developer platform domain AND the URL/host contains the API name.
+		// This prevents developer.evil.com from being accepted without API name relevance.
+		if isKnownDevPlatform(host) && apiNameLower != "" && strings.Contains(strings.ToLower(rawURL), apiNameLower) {
 			return rawURL
 		}
 	}

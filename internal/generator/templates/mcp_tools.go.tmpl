@@ -204,7 +204,7 @@ func makeAPIHandler(method, pathTemplate string, positionalParams []string) serv
 					"\n      Run '{{.Name}}-pp-cli doctor' to check auth status."), nil
 {{- end}}
 			case strings.Contains(msg, "HTTP 401"):
-				return mcplib.NewToolResultError("authentication failed: " + msg +
+				return mcplib.NewToolResultError("authentication failed: " + {{if and .Auth.Type (ne .Auth.Type "none")}}sanitizeErrorBody(msg){{else}}msg{{end}} +
 {{- if eq .Auth.Type "oauth2"}}
 					"\nhint: your token may have expired. Re-run '{{.Name}}-pp-cli auth login' to re-authenticate" +
 {{- else if eq .Auth.Type "api_key"}}
@@ -222,7 +222,7 @@ func makeAPIHandler(method, pathTemplate string, positionalParams []string) serv
 {{- end}}
 					"\n      Run '{{.Name}}-pp-cli doctor' to check auth status."), nil
 			case strings.Contains(msg, "HTTP 403"):
-				return mcplib.NewToolResultError("permission denied: " + msg +
+				return mcplib.NewToolResultError("permission denied: " + {{if and .Auth.Type (ne .Auth.Type "none")}}sanitizeErrorBody(msg){{else}}msg{{end}} +
 {{- if eq .Auth.Type "oauth2"}}
 					"\nhint: your token may lack required scopes. Re-run '{{.Name}}-pp-cli auth login' to re-authorize" +
 {{- else}}
