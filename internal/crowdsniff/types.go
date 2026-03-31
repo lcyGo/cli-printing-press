@@ -25,10 +25,21 @@ type DiscoveredEndpoint struct {
 	SourceName string            // e.g., "@notionhq/client", "github-code-search"
 }
 
+// DiscoveredAuth represents an authentication pattern detected in SDK source code.
+type DiscoveredAuth struct {
+	Type       string // "api_key", "bearer_token", "basic"
+	Header     string // header name or query param name (e.g., "key", "X-Api-Key", "Authorization")
+	In         string // "header" or "query"
+	Format     string // e.g., "Bearer {token}", "{api_key}"
+	EnvVarHint string // detected env var name if visible (e.g., "STEAM_API_KEY")
+	SourceTier string // tier of the source that found this auth pattern
+}
+
 // SourceResult is returned by each discovery source.
 type SourceResult struct {
 	Endpoints         []DiscoveredEndpoint
 	BaseURLCandidates []string // e.g., "https://api.notion.com"
+	Auth              []DiscoveredAuth
 }
 
 // AggregatedEndpoint is a deduplicated endpoint with cross-source metadata.

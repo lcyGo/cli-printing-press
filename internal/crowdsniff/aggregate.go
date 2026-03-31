@@ -189,6 +189,38 @@ func paramFieldCount(p DiscoveredParam) int {
 	return count
 }
 
+// AggregateAuth merges auth patterns from multiple source results and returns
+// the single best auth pattern. Auth from higher-tier sources takes precedence.
+// Returns nil if no auth patterns were detected.
+func AggregateAuth(results []SourceResult) *DiscoveredAuth {
+	var best *DiscoveredAuth
+	bestRank := -1
+
+	for _, result := range results {
+		for i := range result.Auth {
+			auth := &result.Auth[i]
+			rank := tierRank(auth.SourceTier)
+			if rank > bestRank {
+				bestRank = rank
+				best = auth
+			} else if rank == bestRank && best != nil {
+				// Same tier: prefer auth with more metadata (env var hint).
+				if auth.EnvVarHint != "" && best.EnvVarHint == "" {
+					best = auth
+				}
+			}
+		}
+	}
+
+	if best == nil {
+		return nil
+	}
+
+	// Return a copy so callers don't modify the original.
+	cp := *best
+	return &cp
+}
+
 func deduplicateStrings(items []string) []string {
 	seen := make(map[string]struct{}, len(items))
 	result := make([]string, 0, len(items))

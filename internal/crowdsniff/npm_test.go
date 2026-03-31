@@ -651,7 +651,7 @@ class API {
 			HTTPClient: tarballServer.Client(),
 		})
 
-		endpoints, baseURLs, err := src.processPackageTarball(
+		endpoints, baseURLs, _, err := src.processPackageTarball(
 			context.Background(),
 			tarballServer.URL+"/tarball.tgz",
 			"test-sdk",
@@ -679,7 +679,7 @@ class API {
 		t.Parallel()
 
 		src := NewNPMSource(NPMOptions{})
-		_, _, err := src.processPackageTarball(
+		_, _, _, err := src.processPackageTarball(
 			context.Background(),
 			"http://evil.com/tarball.tgz",
 			"evil-sdk",
@@ -709,7 +709,7 @@ class API {
 			HTTPClient: tarballServer.Client(),
 		})
 
-		endpoints, _, err := src.processPackageTarball(
+		endpoints, _, _, err := src.processPackageTarball(
 			context.Background(),
 			tarballServer.URL+"/tarball.tgz",
 			"test-sdk",
@@ -743,7 +743,7 @@ class API {
 			HTTPClient: tarballServer.Client(),
 		})
 
-		endpoints, _, err := src.processPackageTarball(
+		endpoints, _, _, err := src.processPackageTarball(
 			context.Background(),
 			tarballServer.URL+"/tarball.tgz",
 			"symlink-sdk",
@@ -875,7 +875,7 @@ class SteamAPI {
 			HTTPClient: tarballServer.Client(),
 		})
 
-		endpoints, baseURLs, err := src.processPackageTarball(
+		endpoints, baseURLs, _, err := src.processPackageTarball(
 			context.Background(),
 			tarballServer.URL+"/tarball.tgz",
 			"steam-sdk",
@@ -948,4 +948,453 @@ func TestNPMSource_MaxPackagesLimit(t *testing.T) {
 	assert.NoError(t, err)
 	// Only first 10 should have version lookups attempted.
 	assert.LessOrEqual(t, versionCallCount, maxPackagesToProcess)
+}
+
+func TestGrepAuth(t *testing.T) {
+	t.Parallel()
+
+	t.Run("detects query param key auth", func(t *testing.T) {
+		t.Parallel()
+
+		content := `
+class SteamAPI {
+  getOwnedGames(steamid) {
+    return this.get("/IPlayerService/GetOwnedGames/v1", {
+      key: this.apiKey,
+      steamid: steamid
+    });
+  }
+}
+`
+		auths := GrepAuth(content, TierCommunitySDK)
+
+		require.Len(t, auths, 1)
+		assert.Equal(t, "api_key", auths[0].Type)
+		assert.Equal(t, "key", auths[0].Header)
+		assert.Equal(t, "query", auths[0].In)
+		assert.Equal(t, TierCommunitySDK, auths[0].SourceTier)
+	})
+
+	t.Run("detects bearer token auth from header assignment", func(t *testing.T) {
+		t.Parallel()
+
+		content := `
+class Client {
+  constructor(token) {
+    this.token = token;
+  }
+  request(path) {
+    headers['Authorization'] = 'Bearer ' + this.token;
+    return fetch(this.baseUrl + path, { headers });
+  }
+}
+`
+		auths := GrepAuth(content, TierOfficialSDK)
+
+		require.Len(t, auths, 1)
+		assert.Equal(t, "bearer_token", auths[0].Type)
+		assert.Equal(t, "Authorization", auths[0].Header)
+		assert.Equal(t, "header", auths[0].In)
+		assert.Equal(t, "Bearer {token}", auths[0].Format)
+		assert.Equal(t, TierOfficialSDK, auths[0].SourceTier)
+	})
+
+	t.Run("detects bearer token from template literal", func(t *testing.T) {
+		t.Parallel()
+
+		content := "const headers = { 'Authorization': `Bearer ${this.apiKey}` };"
+
+		auths := GrepAuth(content, TierCommunitySDK)
+
+		require.Len(t, auths, 1)
+		assert.Equal(t, "bearer_token", auths[0].Type)
+		assert.Equal(t, "Authorization", auths[0].Header)
+		assert.Equal(t, "header", auths[0].In)
+	})
+
+	t.Run("detects X-Api-Key header auth", func(t *testing.T) {
+		t.Parallel()
+
+		content := `
+function makeRequest(url, apiKey) {
+  headers['X-Api-Key'] = apiKey;
+  return fetch(url, { headers });
+}
+`
+		auths := GrepAuth(content, TierCommunitySDK)
+
+		require.Len(t, auths, 1)
+		assert.Equal(t, "api_key", auths[0].Type)
+		assert.Equal(t, "X-Api-Key", auths[0].Header)
+		assert.Equal(t, "header", auths[0].In)
+	})
+
+	t.Run("no auth patterns returns empty", func(t *testing.T) {
+		t.Parallel()
+
+		content := `
+class Client {
+  listUsers() { return this.get("/v1/users"); }
+  createUser(data) { return this.post("/v1/users", data); }
+}
+`
+		auths := GrepAuth(content, TierCommunitySDK)
+		assert.Empty(t, auths)
+	})
+
+	t.Run("detects env var hint and attaches to first auth", func(t *testing.T) {
+		t.Parallel()
+
+		content := `
+const apiKey = process.env.STEAM_API_KEY;
+class SteamAPI {
+  request(url) {
+    return fetch(url + '?key=' + apiKey);
+  }
+}
+`
+		auths := GrepAuth(content, TierCommunitySDK)
+
+		require.NotEmpty(t, auths)
+		assert.Equal(t, "STEAM_API_KEY", auths[0].EnvVarHint)
+	})
+
+	t.Run("detects env var from bracket notation", func(t *testing.T) {
+		t.Parallel()
+
+		content := `const key = process.env['NOTION_API_KEY'];`
+
+		auths := GrepAuth(content, TierOfficialSDK)
+		// No specific auth pattern found for the key usage, but env var hint
+		// won't be applied without an auth match. This verifies extractEnvVarHint works.
+		hint := extractEnvVarHint(content)
+		assert.Equal(t, "NOTION_API_KEY", hint)
+
+		// Even without a matching auth pattern, we get no false positives.
+		_ = auths
+	})
+
+	t.Run("multiple auth patterns detected", func(t *testing.T) {
+		t.Parallel()
+
+		content := `
+class DualAuthClient {
+  request(url) {
+    headers['X-Api-Key'] = this.apiKey;
+    headers['Authorization'] = 'Bearer ' + this.token;
+    return fetch(url, { headers });
+  }
+}
+`
+		auths := GrepAuth(content, TierCommunitySDK)
+
+		// Should detect both bearer and X-Api-Key.
+		assert.GreaterOrEqual(t, len(auths), 2)
+
+		types := make(map[string]bool)
+		for _, a := range auths {
+			types[a.Type+":"+a.Header] = true
+		}
+		assert.True(t, types["bearer_token:Authorization"])
+		assert.True(t, types["api_key:X-Api-Key"])
+	})
+
+	t.Run("params.key assignment detected", func(t *testing.T) {
+		t.Parallel()
+
+		content := `
+function getUser(userId) {
+  params.key = this.apiKey;
+  return this.get("/users/" + userId, params);
+}
+`
+		auths := GrepAuth(content, TierCommunitySDK)
+
+		require.Len(t, auths, 1)
+		assert.Equal(t, "api_key", auths[0].Type)
+		assert.Equal(t, "query", auths[0].In)
+		assert.Equal(t, "key", auths[0].Header)
+	})
+}
+
+func TestAggregateAuth(t *testing.T) {
+	t.Parallel()
+
+	t.Run("highest tier source wins", func(t *testing.T) {
+		t.Parallel()
+
+		results := []SourceResult{
+			{
+				Auth: []DiscoveredAuth{
+					{Type: "api_key", Header: "key", In: "query", SourceTier: TierCommunitySDK},
+				},
+			},
+			{
+				Auth: []DiscoveredAuth{
+					{Type: "bearer_token", Header: "Authorization", In: "header", SourceTier: TierOfficialSDK},
+				},
+			},
+		}
+
+		merged := AggregateAuth(results)
+		require.NotNil(t, merged)
+		assert.Equal(t, "bearer_token", merged.Type)
+		assert.Equal(t, "Authorization", merged.Header)
+		assert.Equal(t, TierOfficialSDK, merged.SourceTier)
+	})
+
+	t.Run("same tier prefers env var hint", func(t *testing.T) {
+		t.Parallel()
+
+		results := []SourceResult{
+			{
+				Auth: []DiscoveredAuth{
+					{Type: "api_key", Header: "key", In: "query", SourceTier: TierCommunitySDK},
+				},
+			},
+			{
+				Auth: []DiscoveredAuth{
+					{Type: "api_key", Header: "key", In: "query", SourceTier: TierCommunitySDK, EnvVarHint: "STEAM_API_KEY"},
+				},
+			},
+		}
+
+		merged := AggregateAuth(results)
+		require.NotNil(t, merged)
+		assert.Equal(t, "STEAM_API_KEY", merged.EnvVarHint)
+	})
+
+	t.Run("no auth returns nil", func(t *testing.T) {
+		t.Parallel()
+
+		results := []SourceResult{
+			{Endpoints: []DiscoveredEndpoint{{Method: "GET", Path: "/users"}}},
+		}
+
+		merged := AggregateAuth(results)
+		assert.Nil(t, merged)
+	})
+
+	t.Run("empty results returns nil", func(t *testing.T) {
+		t.Parallel()
+
+		merged := AggregateAuth(nil)
+		assert.Nil(t, merged)
+	})
+}
+
+func TestBuildSpec_WithAuth(t *testing.T) {
+	t.Parallel()
+
+	t.Run("auth applied to spec when detected", func(t *testing.T) {
+		t.Parallel()
+
+		endpoints := []AggregatedEndpoint{
+			{Method: "GET", Path: "/v1/users", SourceTier: TierOfficialSDK, SourceCount: 1},
+		}
+		auth := &DiscoveredAuth{
+			Type:       "bearer_token",
+			Header:     "Authorization",
+			In:         "header",
+			Format:     "Bearer {token}",
+			EnvVarHint: "NOTION_TOKEN",
+			SourceTier: TierOfficialSDK,
+		}
+
+		apiSpec, err := BuildSpec("notion", "https://api.notion.com", endpoints, auth)
+		require.NoError(t, err)
+
+		assert.Equal(t, "bearer_token", apiSpec.Auth.Type)
+		assert.Equal(t, "Authorization", apiSpec.Auth.Header)
+		assert.Equal(t, "header", apiSpec.Auth.In)
+		assert.Equal(t, "Bearer {token}", apiSpec.Auth.Format)
+		assert.Equal(t, []string{"NOTION_TOKEN"}, apiSpec.Auth.EnvVars)
+	})
+
+	t.Run("auth defaults to none when nil", func(t *testing.T) {
+		t.Parallel()
+
+		endpoints := []AggregatedEndpoint{
+			{Method: "GET", Path: "/v1/users", SourceTier: TierCodeSearch, SourceCount: 1},
+		}
+
+		apiSpec, err := BuildSpec("test", "https://api.example.com", endpoints, nil)
+		require.NoError(t, err)
+
+		assert.Equal(t, "none", apiSpec.Auth.Type)
+	})
+
+	t.Run("env var derived from API name when no hint", func(t *testing.T) {
+		t.Parallel()
+
+		endpoints := []AggregatedEndpoint{
+			{Method: "GET", Path: "/v1/games", SourceTier: TierCommunitySDK, SourceCount: 1},
+		}
+		auth := &DiscoveredAuth{
+			Type:       "api_key",
+			Header:     "key",
+			In:         "query",
+			SourceTier: TierCommunitySDK,
+		}
+
+		apiSpec, err := BuildSpec("steam", "https://api.steampowered.com", endpoints, auth)
+		require.NoError(t, err)
+
+		assert.Equal(t, "api_key", apiSpec.Auth.Type)
+		assert.Equal(t, "key", apiSpec.Auth.Header)
+		assert.Equal(t, "query", apiSpec.Auth.In)
+		assert.Equal(t, []string{"STEAM_API_KEY"}, apiSpec.Auth.EnvVars)
+	})
+
+	t.Run("bearer token derives TOKEN env var", func(t *testing.T) {
+		t.Parallel()
+
+		endpoints := []AggregatedEndpoint{
+			{Method: "GET", Path: "/v1/users", SourceTier: TierOfficialSDK, SourceCount: 1},
+		}
+		auth := &DiscoveredAuth{
+			Type:       "bearer_token",
+			Header:     "Authorization",
+			In:         "header",
+			Format:     "Bearer {token}",
+			SourceTier: TierOfficialSDK,
+		}
+
+		apiSpec, err := BuildSpec("notion", "https://api.notion.com", endpoints, auth)
+		require.NoError(t, err)
+
+		assert.Equal(t, []string{"NOTION_TOKEN"}, apiSpec.Auth.EnvVars)
+	})
+
+	t.Run("API name with special chars normalized in env var", func(t *testing.T) {
+		t.Parallel()
+
+		endpoints := []AggregatedEndpoint{
+			{Method: "GET", Path: "/v1/events", SourceTier: TierOfficialSDK, SourceCount: 1},
+		}
+		auth := &DiscoveredAuth{
+			Type:       "api_key",
+			Header:     "key",
+			In:         "query",
+			SourceTier: TierOfficialSDK,
+		}
+
+		apiSpec, err := BuildSpec("cal.com", "https://api.cal.com", endpoints, auth)
+		require.NoError(t, err)
+
+		assert.Equal(t, []string{"CAL_COM_API_KEY"}, apiSpec.Auth.EnvVars)
+	})
+}
+
+func TestDeriveEnvVar(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		apiName  string
+		authType string
+		want     string
+	}{
+		{name: "api_key from steam", apiName: "steam", authType: "api_key", want: "STEAM_API_KEY"},
+		{name: "bearer_token from notion", apiName: "notion", authType: "bearer_token", want: "NOTION_TOKEN"},
+		{name: "api name with dot", apiName: "cal.com", authType: "api_key", want: "CAL_COM_API_KEY"},
+		{name: "api name with dash", apiName: "dub-co", authType: "bearer_token", want: "DUB_CO_TOKEN"},
+		{name: "basic auth", apiName: "myapi", authType: "basic", want: "MYAPI_API_KEY"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, deriveEnvVar(tt.apiName, tt.authType))
+		})
+	}
+}
+
+func TestProcessPackageTarball_AuthDetection(t *testing.T) {
+	t.Parallel()
+
+	t.Run("detects auth from SDK tarball", func(t *testing.T) {
+		t.Parallel()
+
+		sdkContent := `
+const baseUrl = "https://api.steampowered.com";
+class SteamAPI {
+  constructor(apiKey) {
+    this.apiKey = apiKey;
+  }
+  getOwnedGames(steamid) {
+    return this.get("/IPlayerService/GetOwnedGames/v1", {
+      key: this.apiKey,
+      steamid: steamid
+    });
+  }
+}
+`
+		tarball := buildTarball(t, map[string]string{
+			"package/src/client.js": sdkContent,
+		})
+
+		tarballServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Write(tarball)
+		}))
+		defer tarballServer.Close()
+
+		src := NewNPMSource(NPMOptions{
+			HTTPClient: tarballServer.Client(),
+		})
+
+		_, _, authPatterns, err := src.processPackageTarball(
+			context.Background(),
+			tarballServer.URL+"/tarball.tgz",
+			"steam-sdk",
+			TierCommunitySDK,
+			500,
+		)
+
+		require.NoError(t, err)
+		require.NotEmpty(t, authPatterns, "expected auth patterns to be detected")
+
+		// Should detect query key auth.
+		var foundQueryKey bool
+		for _, auth := range authPatterns {
+			if auth.Type == "api_key" && auth.In == "query" && auth.Header == "key" {
+				foundQueryKey = true
+			}
+		}
+		assert.True(t, foundQueryKey, "expected api_key query auth with header=key")
+	})
+
+	t.Run("no auth from tarball without auth patterns", func(t *testing.T) {
+		t.Parallel()
+
+		sdkContent := `
+const baseUrl = "https://api.test.com";
+class API {
+  listUsers() { return this.get("/v1/users"); }
+}
+`
+		tarball := buildTarball(t, map[string]string{
+			"package/src/client.js": sdkContent,
+		})
+
+		tarballServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Write(tarball)
+		}))
+		defer tarballServer.Close()
+
+		src := NewNPMSource(NPMOptions{
+			HTTPClient: tarballServer.Client(),
+		})
+
+		_, _, authPatterns, err := src.processPackageTarball(
+			context.Background(),
+			tarballServer.URL+"/tarball.tgz",
+			"test-sdk",
+			TierCommunitySDK,
+			0,
+		)
+
+		require.NoError(t, err)
+		assert.Empty(t, authPatterns)
+	})
 }

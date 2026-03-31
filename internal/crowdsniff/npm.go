@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -157,7 +158,7 @@ func (s *NPMSource) Discover(ctx context.Context, apiName string) (SourceResult,
 		}
 
 		// Download and extract tarball.
-		endpoints, baseURLs, processErr := s.processPackageTarball(ctx, tarballURL, pkg.Name, tier, downloads[pkg.Name])
+		endpoints, baseURLs, authPatterns, processErr := s.processPackageTarball(ctx, tarballURL, pkg.Name, tier, downloads[pkg.Name])
 		if processErr != nil {
 			fmt.Fprintf(os.Stderr, "crowd-sniff: failed to process %s: %v\n", pkg.Name, processErr)
 			continue
@@ -165,6 +166,7 @@ func (s *NPMSource) Discover(ctx context.Context, apiName string) (SourceResult,
 
 		result.Endpoints = append(result.Endpoints, endpoints...)
 		result.BaseURLCandidates = append(result.BaseURLCandidates, baseURLs...)
+		result.Auth = append(result.Auth, authPatterns...)
 	}
 
 	return result, nil
@@ -285,48 +287,49 @@ func (s *NPMSource) fetchTarballURL(ctx context.Context, name, version string) (
 	return version_.Dist.Tarball, nil
 }
 
-// processPackageTarball downloads a tarball, extracts it, and greps for endpoints.
-func (s *NPMSource) processPackageTarball(ctx context.Context, tarballURL, pkgName, tier string, weeklyDownloads int) ([]DiscoveredEndpoint, []string, error) {
+// processPackageTarball downloads a tarball, extracts it, and greps for endpoints, auth patterns, and base URLs.
+func (s *NPMSource) processPackageTarball(ctx context.Context, tarballURL, pkgName, tier string, weeklyDownloads int) ([]DiscoveredEndpoint, []string, []DiscoveredAuth, error) {
 	// Security: validate tarball URL is HTTPS.
 	parsed, err := url.Parse(tarballURL)
 	if err != nil {
-		return nil, nil, fmt.Errorf("invalid tarball URL: %w", err)
+		return nil, nil, nil, fmt.Errorf("invalid tarball URL: %w", err)
 	}
 	if parsed.Scheme != "https" {
-		return nil, nil, fmt.Errorf("tarball URL must be HTTPS, got %s", parsed.Scheme)
+		return nil, nil, nil, fmt.Errorf("tarball URL must be HTTPS, got %s", parsed.Scheme)
 	}
 
 	// Download tarball.
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, tarballURL, nil)
 	if err != nil {
-		return nil, nil, fmt.Errorf("creating tarball request: %w", err)
+		return nil, nil, nil, fmt.Errorf("creating tarball request: %w", err)
 	}
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return nil, nil, fmt.Errorf("downloading tarball: %w", err)
+		return nil, nil, nil, fmt.Errorf("downloading tarball: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, nil, fmt.Errorf("tarball download returned status %d", resp.StatusCode)
+		return nil, nil, nil, fmt.Errorf("tarball download returned status %d", resp.StatusCode)
 	}
 
 	// Create temp directory.
 	tmpDir, err := os.MkdirTemp("", "crowd-sniff-npm-*")
 	if err != nil {
-		return nil, nil, fmt.Errorf("creating temp dir: %w", err)
+		return nil, nil, nil, fmt.Errorf("creating temp dir: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Extract tarball with size limit.
 	if err := extractTarball(resp.Body, tmpDir); err != nil {
-		return nil, nil, fmt.Errorf("extracting tarball: %w", err)
+		return nil, nil, nil, fmt.Errorf("extracting tarball: %w", err)
 	}
 
-	// Grep extracted files for endpoint patterns.
+	// Grep extracted files for endpoint patterns and auth patterns.
 	var allEndpoints []DiscoveredEndpoint
 	var allBaseURLs []string
+	var allContent strings.Builder
 
 	_ = filepath.Walk(tmpDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -353,17 +356,23 @@ func (s *NPMSource) processPackageTarball(ctx context.Context, tarballURL, pkgNa
 			return nil // skip unreadable files
 		}
 
-		endpoints, baseURLs := GrepEndpoints(string(content), pkgName, tier)
-		endpoints = EnrichWithParams(string(content), endpoints)
+		contentStr := string(content)
+		endpoints, baseURLs := GrepEndpoints(contentStr, pkgName, tier)
+		endpoints = EnrichWithParams(contentStr, endpoints)
 		allEndpoints = append(allEndpoints, endpoints...)
 		allBaseURLs = append(allBaseURLs, baseURLs...)
+		allContent.WriteString(contentStr)
+		allContent.WriteByte('\n')
 		return nil
 	})
 
 	// Adjust tier for low-download packages (still community, but we note it).
 	_ = weeklyDownloads // Used for future priority sorting; tier stays the same.
 
-	return allEndpoints, allBaseURLs, nil
+	// Extract auth patterns from the combined source content.
+	authPatterns := GrepAuth(allContent.String(), tier)
+
+	return allEndpoints, allBaseURLs, authPatterns, nil
 }
 
 // extractTarball extracts a gzipped tar archive to the destination directory.
@@ -461,4 +470,132 @@ func classifyPackage(pkg npmPackageInfo, apiNameLower string) string {
 	}
 
 	return TierCommunitySDK
+}
+
+// --- Auth pattern detection ---
+
+var (
+	// bearerHeaderPattern matches Bearer token auth in headers.
+	// Examples:
+	//   headers['Authorization'] = 'Bearer ' + token
+	//   Authorization: `Bearer ${token}`
+	//   headers.Authorization = `Bearer ${this.token}`
+	//   'Authorization': 'Bearer ' + apiKey
+	bearerHeaderPattern = regexp.MustCompile(`(?i)(?:headers\s*[\[.]\s*['"]?Authorization['"]?\s*[\])]?\s*=|['"]Authorization['"]\s*:)\s*['` + "`" + `]?\s*Bearer\b`)
+
+	// bearerTemplatePattern matches template literal Bearer patterns.
+	// Examples:
+	//   `Bearer ${token}`
+	//   `Bearer ${this.apiKey}`
+	bearerTemplatePattern = regexp.MustCompile("(?i)Bearer\\s+\\$\\{")
+
+	// xApiKeyHeaderPattern matches X-Api-Key style headers.
+	// Examples:
+	//   headers['X-Api-Key'] = apiKey
+	//   'X-Api-Key': this.key
+	//   headers.set('x-api-key', key)
+	xApiKeyHeaderPattern = regexp.MustCompile(`(?i)(?:headers\s*[\[.]\s*)?['"]X-Api-Key['"]\s*[\])]?\s*[:=]`)
+
+	// queryKeyAuthPattern matches API key passed as a query parameter named "key".
+	// Examples:
+	//   params.key = this.apiKey
+	//   query.key = apiKey
+	//   { key: this.apiKey }
+	//   'key': this.apiKey
+	//   ?key=${apiKey}
+	//   ?key=' + this.key
+	queryKeyAuthPattern = regexp.MustCompile(`(?i)(?:params|query)\s*\.\s*key\s*=|(?:\bkey\b\s*:\s*(?:this\s*\.\s*)?(?:api_?[Kk]ey|key)\b)|(?:['"]key['"]\s*:\s*(?:this\s*\.\s*)?(?:api_?[Kk]ey|key))|[?&]key\s*=\s*['` + "`" + `]\s*\+?\s*\$?\{?`)
+
+	// envVarHintPattern matches environment variable references that suggest auth.
+	// Examples:
+	//   process.env.STEAM_API_KEY
+	//   process.env.API_KEY
+	//   process.env['NOTION_API_KEY']
+	envVarHintPattern = regexp.MustCompile(`process\.env\s*(?:\.\s*([A-Z][A-Z0-9_]*(?:API|KEY|TOKEN|SECRET)[A-Z0-9_]*)|\[\s*['"]([A-Z][A-Z0-9_]*(?:API|KEY|TOKEN|SECRET)[A-Z0-9_]*)['"]\s*\])`)
+
+	// constructorAuthHintPattern matches constructor parameters that hint at auth.
+	// Examples:
+	//   constructor(apiKey)
+	//   constructor(apiKey, options)
+	//   new Client(apiKey)
+	//   new SteamAPI(key)
+	constructorAuthHintPattern = regexp.MustCompile(`(?:constructor|new\s+\w+)\s*\(\s*(api_?[Kk]ey|apiKey|key|token|access_?[Tt]oken|accessToken)`)
+)
+
+// GrepAuth scans SDK source code for authentication patterns and returns
+// any detected auth configurations. Designed for high precision — it only
+// reports patterns that are clearly auth-related. False negatives are
+// acceptable; false positives are not.
+func GrepAuth(content string, sourceTier string) []DiscoveredAuth {
+	var auths []DiscoveredAuth
+	seen := make(map[string]bool) // dedup by Type+In+Header
+
+	// Check for Bearer token auth.
+	if bearerHeaderPattern.MatchString(content) || bearerTemplatePattern.MatchString(content) {
+		key := "bearer_token:header:Authorization"
+		if !seen[key] {
+			seen[key] = true
+			auths = append(auths, DiscoveredAuth{
+				Type:       "bearer_token",
+				Header:     "Authorization",
+				In:         "header",
+				Format:     "Bearer {token}",
+				SourceTier: sourceTier,
+			})
+		}
+	}
+
+	// Check for X-Api-Key header auth.
+	if xApiKeyHeaderPattern.MatchString(content) {
+		key := "api_key:header:X-Api-Key"
+		if !seen[key] {
+			seen[key] = true
+			auths = append(auths, DiscoveredAuth{
+				Type:       "api_key",
+				Header:     "X-Api-Key",
+				In:         "header",
+				SourceTier: sourceTier,
+			})
+		}
+	}
+
+	// Check for query param "key" auth.
+	if queryKeyAuthPattern.MatchString(content) {
+		key := "api_key:query:key"
+		if !seen[key] {
+			seen[key] = true
+			auths = append(auths, DiscoveredAuth{
+				Type:       "api_key",
+				Header:     "key",
+				In:         "query",
+				SourceTier: sourceTier,
+			})
+		}
+	}
+
+	// Look for env var hints.
+	envVarHint := extractEnvVarHint(content)
+
+	// Apply env var hint to the first detected auth.
+	if envVarHint != "" && len(auths) > 0 {
+		auths[0].EnvVarHint = envVarHint
+	}
+
+	return auths
+}
+
+// extractEnvVarHint scans content for process.env references that look
+// auth-related and returns the first match.
+func extractEnvVarHint(content string) string {
+	matches := envVarHintPattern.FindAllStringSubmatch(content, -1)
+	for _, m := range matches {
+		// Group 1 is process.env.VAR, group 2 is process.env['VAR'].
+		if m[1] != "" {
+			return m[1]
+		}
+		if m[2] != "" {
+			return m[2]
+		}
+	}
+	return ""
 }

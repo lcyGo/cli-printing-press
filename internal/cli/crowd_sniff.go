@@ -102,6 +102,7 @@ func runCrowdSniff(ctx context.Context, apiName, baseURL, outputPath string, asJ
 	}
 
 	aggregated, baseURLCandidates := crowdsniff.Aggregate(results)
+	mergedAuth := crowdsniff.AggregateAuth(results)
 
 	if len(aggregated) == 0 {
 		return fmt.Errorf("no endpoints discovered for %q", apiName)
@@ -116,7 +117,7 @@ func runCrowdSniff(ctx context.Context, apiName, baseURL, outputPath string, asJ
 		return fmt.Errorf("base URL must use HTTPS: %s", resolvedBaseURL)
 	}
 
-	apiSpec, err := crowdsniff.BuildSpec(apiName, resolvedBaseURL, aggregated)
+	apiSpec, err := crowdsniff.BuildSpec(apiName, resolvedBaseURL, aggregated, mergedAuth)
 	if err != nil {
 		return fmt.Errorf("building spec: %w", err)
 	}
