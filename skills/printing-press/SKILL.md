@@ -419,6 +419,8 @@ Suggested shape:
 3. ...
 ```
 
+**MANDATORY: Before proceeding to Phase 1.5 (Absorb Gate), you MUST evaluate Phase 1.7 (Sniff Gate) and Phase 1.8 (Crowd Sniff Gate) below.** If no spec source has been resolved yet (no `--spec`, no `--har`, no catalog spec URL), the sniff gate decision matrix MUST be evaluated. Do not skip to Phase 1.5.
+
 ## Phase 1.7: Sniff Gate
 
 After Phase 1 research, evaluate whether sniffing the live site would improve the spec. Skip this gate entirely if the user already passed `--har` or `--spec` (spec source is already resolved). If `SNIFF_TARGET_URL` is set (user chose "The website itself" in Phase 0), skip the decision matrix and go directly to "If user approves sniff" — the user already approved, and `SNIFF_TARGET_URL` is the starting URL.
@@ -867,6 +869,8 @@ Proceed with whatever spec source exists. If no spec was found, fall back to `--
 ## Phase 1.5: Ecosystem Absorb Gate
 
 THIS IS A MANDATORY STOP GATE. Do not generate until this is complete and approved.
+
+**Pre-check:** If no spec or HAR file has been resolved by this point and Phase 1.7 (Sniff Gate) was not evaluated, STOP. Go back and run the sniff gate decision matrix. The absorb manifest depends on knowing the API surface, which requires a spec.
 
 The GOAT CLI doesn't "find gaps." It absorbs EVERY feature from EVERY tool and then transcends with compound use cases nobody thought of. This phase builds the absorb manifest.
 
