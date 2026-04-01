@@ -144,7 +144,12 @@ func Profile(s *spec.APISpec) *APIProfile {
 				listResources[resourceName] = struct{}{}
 				if endpoint.Pagination != nil {
 					p.ListEndpoints++
-					syncable[resourceName] = endpoint.Path
+					// Pick the shortest path for determinism when multiple
+					// paginated list endpoints exist for the same resource.
+					// Shorter paths are typically the primary list endpoint.
+					if existing, ok := syncable[resourceName]; !ok || len(endpoint.Path) < len(existing) {
+						syncable[resourceName] = endpoint.Path
+					}
 				}
 			}
 

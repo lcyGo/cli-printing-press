@@ -135,9 +135,12 @@ func RunVerify(cfg VerifyConfig) (*VerifyReport, error) {
 					env = append(env, ev+"="+val)
 				}
 			}
-			// Also pass the explicit API key under the primary env var if provided.
+			// Also pass the explicit --api-key under ALL auth env var names so the
+			// generated CLI finds it regardless of which env var it reads.
 			if cfg.APIKey != "" {
-				env = append(env, envVarName+"="+cfg.APIKey)
+				for _, ev := range authEnvVars {
+					env = append(env, ev+"="+cfg.APIKey)
+				}
 			}
 		} else {
 			env = append(env, baseURLEnvVar+"="+baseURLOverride)
