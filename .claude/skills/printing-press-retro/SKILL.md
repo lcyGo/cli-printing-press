@@ -135,6 +135,43 @@ CLI.
 
 Ask: could this optimization be detected automatically and applied by the generator?
 
+### 2f. Scorer accuracy audit
+
+Before proposing machine fixes to improve scores, check whether the scoring itself
+is correct. A low verify score might mean the CLI is bad, or it might mean verify
+has a bug. Same for dogfood and scorecard. **Changing the generator to satisfy a
+broken scorer is worse than doing nothing** — it adds complexity to work around a
+tool defect, and the workaround becomes load-bearing debt.
+
+For each score penalty from dogfood, verify, and scorecard:
+
+1. **Trace the scorer's logic.** Read the scoring tool's source code to understand
+   exactly what it checks and how it derives the score. Don't guess.
+2. **Test the scorer's assumption against reality.** Does the CLI actually have
+   the problem the scorer claims? Run the relevant command, read the code, verify.
+3. **Classify the penalty:**
+   - **Scorer is correct** — the CLI genuinely has this problem. Fix the generator
+     or the CLI code.
+   - **Scorer is wrong** — the CLI is fine but the scorer can't detect it correctly
+     (e.g., verify looks for the wrong command name, dogfood skips the file where
+     the flag is used). Fix the scoring tool.
+   - **Scorer is partially right** — the CLI could be better AND the scorer's
+     approach is flawed. Fix both, but distinguish which is primary.
+
+Common scorer bugs to watch for:
+- **Name derivation mismatches** — the tool derives expected names differently
+  than the generator creates them (e.g., from Go function names vs cobra `Use:`)
+- **Grep-based detection missing patterns** — simple string search fails when
+  code uses the feature through indirection (struct fields, interface methods)
+- **File exclusions too broad** — the tool skips files it shouldn't (like
+  dogfood skipping root.go for flag usage)
+- **Section-counting heuristics** — scorecard checks for named sections rather
+  than content quality (README with all sections but bad content scores higher
+  than a well-organized README missing one heading)
+
+The scorer audit is not optional. Every finding that comes from a score penalty
+must have a "Scorer correct?" assessment before proposing a fix direction.
+
 ## Phase 3: Classify findings
 
 For each finding from Phase 2, answer these questions. Skip findings that only
@@ -145,11 +182,29 @@ affect this specific API and wouldn't recur.
 **1. What happened?**
 One sentence. Describe the symptom or the work that was done, not the fix.
 
-**2. What category is this?**
+**2. Is the scorer correct?** (mandatory for any finding surfaced by a score penalty)
+
+Before classifying the finding, determine whether the tool that flagged it is
+measuring correctly. Read the tool's source to understand the detection logic.
+Test the claim against reality. Classify as one of:
+
+- **Scorer correct** — the CLI genuinely has this problem. Proceed to fix the
+  generator, template, or CLI code.
+- **Scorer wrong** — the CLI is fine; the scoring tool has a bug. The fix goes
+  in the scoring tool (verify, dogfood, or scorecard), not the generator.
+- **Both** — the CLI could be better AND the scorer's approach is flawed. Fix
+  both, but label which is primary.
+
+If the scorer is wrong, the finding's category is **Scorer bug**, the component
+is the scoring tool, and the durable fix targets the tool — not the generator.
+Do not propose generator workarounds for scorer bugs.
+
+**3. What category is this?**
 
 | Category | Description | Example |
 |----------|-------------|---------|
 | **Bug** | Generated code is wrong | serviceForPath returns wrong service |
+| **Scorer bug** | Scoring tool reports a false positive or mis-measures | Verify derives command name from Go function instead of cobra Use field |
 | **Template gap** | Generator has no template for a common pattern | No top-level command aliases |
 | **Assumption mismatch** | Generator assumes X but API uses Y | Cursor pagination vs offset |
 | **Recurring friction** | Happens every generation, might be inherent | Dead code cleanup |
@@ -157,9 +212,8 @@ One sentence. Describe the symptom or the work that was done, not the fix.
 | **Default gap** | Generator emits a wrong or placeholder default | Sync resources list, DB path |
 | **Discovered optimization** | Improvement found during use | Compact number formatting |
 | **Skill instruction gap** | Skill told Claude wrong thing or missed a step | Phase ordering issue |
-| **Tool limitation** | Verify/dogfood/scorecard missed or mis-reported | False positive dead code |
 
-**3. Where in the machine does this originate?**
+**4. Where in the machine does this originate?**
 
 | Component | Path | Controls |
 |-----------|------|----------|
@@ -170,7 +224,7 @@ One sentence. Describe the symptom or the work that was done, not the fix.
 | Main skill | `skills/printing-press/SKILL.md` | Orchestration instructions |
 | Verify/dogfood/scorecard | CLI commands | Quality checking tools |
 
-**4. Blast radius and fallback cost — should the machine handle this?**
+**5. Blast radius and fallback cost — should the machine handle this?**
 
 This is the most important question and the easiest to get wrong. The retro runs
 right after a session with one API, and pattern-matching from a single example is
@@ -279,7 +333,7 @@ When the finding applies to an API subclass, the recommendation must include:
 - **Frequency estimate:** How common is this subclass? If it's >20% of APIs the
   printing press targets, the conditional logic is likely worth the complexity.
 
-**5. Is this inherent or fixable?**
+**6. Is this inherent or fixable?**
 This question matters most for recurring friction. Some friction is structural — code
 generation will always produce some unused code because templates are generic. But
 "inherent" shouldn't be the default answer. Push hard on whether a smarter generator,
@@ -290,7 +344,7 @@ as a post-generation step").
 
 If fixable: propose the fix at the right level.
 
-**6. What is the durable fix?**
+**7. What is the durable fix?**
 A concrete change to the machine. Prefer this hierarchy:
 
 1. **Generator template fix** — Code is emitted correctly from the start. Zero manual work.
@@ -304,12 +358,18 @@ pagination and verify sync terminates after fetching all pages."
 
 ## Phase 4: Prioritize
 
-Group findings into two buckets using judgment, not a formula. No "backlog" —
+Group findings into three buckets using judgment, not a formula. No "backlog" —
 backlog is where findings go to die. Either it's worth doing or it's not.
 
-- **Do** — worth a machine fix. This is the default. Split into "Do now" (scoped
-  cleanly, can implement immediately) and "Do next" (needs design work or careful
-  guards — plan before implementing).
+- **Fix the scorer** — the scoring tool is wrong and penalizing a correct CLI.
+  The fix goes in the quality tool (verify, dogfood, or scorecard), not the
+  generator. These are the highest-priority fixes because a wrong scorer
+  distorts every future retro and leads to wasted effort "fixing" things that
+  aren't broken. Include the scorer's buggy code path in the work unit.
+- **Do** — the score is correct and a machine fix is warranted. This is the
+  default for legitimate penalties. Split into "Do now" (scoped cleanly, can
+  implement immediately) and "Do next" (needs design work or careful guards —
+  plan before implementing).
 - **Skip** — unlikely to encounter again across other APIs. State why.
 
 Do NOT use numerical scoring formulas. The inputs (frequency=3, fallback=4) are
@@ -334,6 +394,11 @@ judgment. State the reasoning in words instead.
 
 ### 1. <Title> (<category>)
 - **What happened:** ...
+- **Scorer correct?** (required if surfaced by a score penalty) Yes / No / Partially.
+  If no: what is the scorer's bug? Trace the detection logic in the tool's source,
+  explain why it produces a false result, and cite the specific code path (file:line).
+  The fix goes in the scoring tool, not the generator. If partially: explain what
+  part of the penalty is legitimate vs what part is a detection bug.
 - **Root cause:** Component + what's specifically wrong
 - **Cross-API check:** Would this recur across other APIs and input methods?
 - **Frequency:** every API / most / subclass:<name> / this API only
@@ -353,6 +418,10 @@ judgment. State the reasoning in words instead.
 ### 2. ...
 
 ## Prioritized Improvements
+
+### Fix the Scorer (scoring tool bugs — highest priority)
+| # | Scorer | Bug | Impact (false failures/points) | Fix target |
+|---|--------|-----|-------------------------------|------------|
 
 ### Do Now
 | # | Fix | Component | Frequency | Fallback Reliability | Complexity | Guards |
@@ -504,6 +573,12 @@ If neither skill name resolves, fall back to:
 
 - The retro is about the machine, not the CLI. Do not propose fixes to the generated
   CLI.
+- **Never work around a scorer bug in the generator.** If a scoring tool (verify,
+  dogfood, scorecard) penalizes something incorrectly, the fix goes in the scoring
+  tool. Changing the generator to satisfy a broken scorer adds complexity to work
+  around a tool defect, and the workaround becomes load-bearing debt that makes
+  future changes harder. Trace the scorer's logic, prove it's wrong, and fix the
+  tool.
 - Do not add more phases, documents, or gates to the main skill. It's already long.
   Propose making existing phases smarter or the generator emit better defaults.
 - Prefer automatic fixes (generator, binary) over instructional fixes (skill).
