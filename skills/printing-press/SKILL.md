@@ -90,6 +90,85 @@ See the `printing-press-polish` skill for details. It runs diagnostics, fixes ve
 - YAML, JSON, local paths, and URLs are all valid spec inputs for the verification tools.
 - Maximum 2 verification fix loops unless the user explicitly asks for more.
 
+## Orientation & Briefing
+
+Before setup, check whether the user provided arguments. Handle two cases:
+
+### No Arguments: Orientation
+
+If the user typed `/printing-press` with no arguments (no API name, no `--spec`, no `--har`, no URL), print an orientation and ask what they'd like to build:
+
+> The Printing Press generates a fully functional CLI for any API. You give it an API name, a spec file, or a URL. It researches the landscape, catalogs every feature that exists in any competing tool, invents novel features of its own, then generates a Go CLI that matches and beats everything out there — with offline search, agent-native output, and a local SQLite data layer.
+>
+> By the end, you'll have a working CLI in `~/printing-press/library/` that you can use for yourself, distribute within your company, or publish to the printing-press library.
+>
+> The process takes 10-40 minutes depending on API complexity. Simple APIs with official specs (Stripe, GitHub) are faster. Undocumented APIs that need discovery (ESPN, Domino's) take longer.
+
+Then present examples and ask via `AskUserQuestion`:
+
+> "What API would you like to build a CLI for?"
+
+Options:
+1. **I'll type it** — (User provides the API name, URL, or spec path via the automatic "Other" option)
+
+Show example invocations alongside:
+```
+/printing-press Notion
+/printing-press Discord codex
+/printing-press --spec ./openapi.yaml
+/printing-press --har ./capture.har --name MyAPI
+/printing-press https://postman.com
+```
+
+After receiving the answer, set it as the argument and proceed to the briefing below.
+
+### With Arguments: Briefing
+
+When the user provided an argument (API name, `--spec`, `--har`, or URL), print a brief process overview before the setup contract runs. This sets expectations and collects any upfront context.
+
+Print as prose (in Victorian voice):
+
+> Very well. Setting the type for `<API>`.
+>
+> **Here is how this will proceed:**
+> 1. I shall research `<API>` across the internet: official docs, community wrappers, competing CLIs, MCP servers, and npm/PyPI packages
+> 2. I shall catalog every feature that exists in any tool, then devise novel features of my own that no existing tool offers
+> 3. I shall present what I found and what I invented — you will have a chance to add your own ideas or adjust the plan before I build
+> 4. I shall generate a Go CLI, build every feature from the plan, then verify quality through dogfood, runtime verification, and scoring
+>
+> **What you will have at the end:** A fully functional CLI at `~/printing-press/library/<api>-pp-cli` that you can use yourself, share within your company, or publish to the printing-press library.
+>
+> **Time:** 10-40 minutes depending on API complexity.
+>
+> **Things that help if you have them:**
+> - An API key (for live smoke testing at the end)
+> - A logged-in browser session (for discovering authenticated endpoints)
+> - A spec file or HAR capture (skips discovery)
+
+If the user provided `--spec`, adapt: "You have provided a spec, so I shall skip discovery and proceed directly to analysis and generation. Should be faster."
+
+If the user provided `--har`, adapt: "You have provided a HAR capture, so I shall generate a spec from your traffic and skip browser sniffing."
+
+Then ask via `AskUserQuestion`:
+
+**question:** "Anything you want me to know before I begin? A vision for what this CLI should do, specific features you care about, or context I should have?"
+
+**options:**
+1. **No, let's go** — "Start the process with default intelligence"
+2. **I have context to share** — "Tell me your vision, priorities, or specific features you care about"
+3. **I have an API key or I'm logged in** — "Share auth context now so I can plan for authenticated discovery and testing"
+
+If the user selects **"No, let's go"**, proceed to Setup immediately.
+
+If the user selects **"I have context to share"**, capture their free-text response as `USER_BRIEFING_CONTEXT`. This context will be:
+- Added to the Phase 1 Research Brief under a `## User Vision` section
+- Used as a 4th self-brainstorm question in Phase 1.5c.5: "Based on the user's stated vision, what features directly serve their stated goals that the absorbed features don't cover?"
+- Referenced at the Phase Gate 1.5 absorb gate: "You mentioned [summary] at the start. Want to add more, or does the manifest already cover it?"
+
+If the user selects **"I have an API key or I'm logged in"**, ask which one and capture it. Set `AUTH_CONTEXT` fields so the API Key Gate (Phase 0.5) and Pre-Sniff Auth Intelligence (Phase 1.6, if implemented) do not re-ask.
+
+---
+
 ## Setup
 
 Read and apply [references/voice.md](references/voice.md) for this session.
@@ -396,6 +475,9 @@ Suggested shape:
 - Primary entities:
 - Sync cursor:
 - FTS/search:
+
+## User Vision
+- [USER_BRIEFING_CONTEXT if provided, otherwise omit this section]
 
 ## Product Thesis
 - Name:
@@ -958,10 +1040,11 @@ Analyze these 5 categories using data already gathered — do NOT run new search
 
 5. **Agent workflow gaps** — What would an AI agent using this CLI wish it could do in one command instead of multiple? (e.g., "show me everything about X" commands, bulk operations, pre-flight checks)
 
-6. **Self-brainstorm** — Answer these 3 questions using the research context gathered so far. Do NOT ask the user — answer them yourself from the research brief, absorb manifest, and ecosystem findings:
+6. **Self-brainstorm** — Answer these questions using the research context gathered so far. Do NOT ask the user — answer them yourself from the research brief, absorb manifest, and ecosystem findings:
    - Based on the research brief's top workflows and user profiles, what workflows does the typical power user of this API do that aren't covered in the absorbed features?
    - Based on competitor repo issues, community pain points, and ecosystem gaps found in Phase 1/1.5, what are the most annoying limitations that a CLI with SQLite could fix?
    - Based on the NOI and domain archetype, what single "killer feature" would make a power user install this CLI over any alternative?
+   - (Only when `USER_BRIEFING_CONTEXT` is non-empty) Based on the user's stated vision, what features directly serve their stated goals that the absorbed features don't already cover?
 
 #### Generate and Score Candidates
 
@@ -996,21 +1079,47 @@ The manifest now includes compound use cases (Step 1.5c) and auto-suggested + au
 
 ### Phase Gate 1.5
 
-**STOP.** Present the absorb manifest to the user via `AskUserQuestion`:
+**STOP.** Present the absorb manifest to the user in two parts: a prose showcase, then a question.
 
-"Found [N] features across [X] tools (MCPs, skills, CLIs, scripts). Our CLI will absorb all [N] and add [M] transcendence features (auto-suggested and brainstormed with scores). Total: [N+M] features. This is [Z]% more than the best existing tool."
+**Part 1: Prose showcase (print before the AskUserQuestion)**
+
+Print as regular text output:
+
+> ## Absorb Summary
+>
+> I cataloged **[N] features** across [X] tools ([tool names]). Our CLI will match every one of them with offline search, --json output, and agent-native flags.
+>
+> ## Novel Features (my ideas, not found in any existing tool)
+>
+> Beyond absorbing what exists, I came up with [M] features that no existing tool has. Here are the top 3:
+>
+> 1. **[Feature name]** ([score]/10) — [one-line description]. Evidence: [what research finding inspired this].
+> 2. **[Feature name]** ([score]/10) — [one-line description]. Evidence: [source].
+> 3. **[Feature name]** ([score]/10) — [one-line description]. Evidence: [source].
+>
+> Plus [M-3] more in the full manifest.
+>
+> Total: [N+M] features, [Z]% more than [best existing tool name] ([best tool feature count]).
+
+If fewer than 3 novel features scored >= 5/10, show all qualifying features instead of "top 3." If 0 qualified, note: "No novel features scored high enough to recommend. The absorbed features cover the landscape well."
+
+**Part 2: AskUserQuestion**
+
+> "Ready to generate with the full [N+M]-feature manifest? Or do you have ideas to add?"
 
 Options:
-1. **Approve - generate now** — Start CLI generation with the full manifest
-2. **Add your own feature ideas** — Add features from your personal experience that research couldn't surface
-3. **Review the research** — Show me the full brief and manifest before deciding
+1. **Approve — generate now** — Start CLI generation with the full manifest
+2. **I have ideas to add** — Tell me features from your experience, then we'll generate
+3. **Review full manifest** — Show me every absorbed and novel feature before deciding
 4. **Trim scope** — The feature count is too ambitious, let's focus on a subset
 
-If user selects **"Add your own feature ideas"**, ask 3 structured questions targeting personal knowledge the research couldn't surface:
+If user selects **"I have ideas to add"**, ask 3 structured questions targeting personal knowledge the research couldn't surface:
 
-1. "What workflows do YOU personally use `<API>` for that we might have missed?"
+1. "Beyond the [M] ideas above, what workflows do YOU use `<API>` for that we might have missed?"
 2. "What frustrates YOU about this API that the research didn't surface?"
-3. "What's YOUR killer feature - something only you'd think of?"
+3. "What's YOUR killer feature — something only you'd think of?"
+
+If `USER_BRIEFING_CONTEXT` is non-empty, acknowledge it: "You mentioned [summary of their vision] at the start. Want to add more, or does the manifest already cover it?"
 
 Each answer that produces a concrete feature → score and add to the transcendence table. After the brainstorm, return to this gate with the updated manifest.
 WAIT for approval. Do NOT generate until approved.
