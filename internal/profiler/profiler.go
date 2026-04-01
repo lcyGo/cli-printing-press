@@ -184,7 +184,15 @@ func Profile(s *spec.APISpec) *APIProfile {
 				p.HasDependencies = true
 			}
 
-			for _, field := range collectStringFields(endpoint.Body) {
+			// Collect searchable string fields from both request body and query
+			// params. GET endpoints don't have bodies, but their query params
+			// often name the same fields that responses contain (e.g., "name",
+			// "query", "search"). This enables FTS5 indexing for those entities.
+			allFields := collectStringFields(endpoint.Body)
+			if endpoint.Method == "GET" || endpoint.Method == "" {
+				allFields = append(allFields, collectStringFields(endpoint.Params)...)
+			}
+			for _, field := range allFields {
 				if searchable[resourceName] == nil {
 					searchable[resourceName] = make(map[string]struct{})
 				}

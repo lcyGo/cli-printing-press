@@ -1296,14 +1296,23 @@ func scoreSyncCorrectness(dir string) int {
 		score += 2
 	}
 	// URL path parameters only count when other sync signals are present,
-	// otherwise any CLI with parameterized routes gets free sync credit
-	if score > 0 && strings.Contains(content, "/{") {
+	// otherwise any CLI with parameterized routes gets free sync credit.
+	hasParamPaths := strings.Contains(content, "/{")
+	if score > 0 && hasParamPaths {
 		score += 3
 	}
-	if score > 10 {
-		score = 10
+	// When the API has no parameterized list endpoints, the path-params bonus
+	// is N/A. Rescale the max from 10 to 7 so flat APIs aren't penalized for
+	// not having hierarchical resources.
+	max := 10
+	if !hasParamPaths {
+		max = 7
 	}
-	return score
+	if score > max {
+		score = max
+	}
+	// Rescale to 0-10 range
+	return score * 10 / max
 }
 
 func scoreTypeFidelity(dir string) int {
@@ -1627,7 +1636,9 @@ func hasQualityDescription(content string) bool {
 		return false
 	}
 	desc := rest[q1+1 : q1+1+q2]
-	// Quality: must be > 10 chars and contain a space (multi-word)
+	// Minimum quality: multi-word and non-trivial length.
+	// Actual description quality (informative vs boilerplate) is handled by
+	// the skill instruction during Phase 3 polish, not by this scorer.
 	return len(desc) > 10 && strings.Contains(desc, " ")
 }
 
