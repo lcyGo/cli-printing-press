@@ -277,15 +277,36 @@ Claude drives browser-use directly via CLI commands — no LLM key needed, no Py
 
 **IMPORTANT: Run the page collection loop in foreground, not background.** The loop takes ~60-90 seconds for 10-15 pages. Background execution has unreliable output capture for shell functions that call browser-use. Always run this inline.
 
-**Step 2a.1: Build the page list**
+**Step 2a.1: Build the user flow plan**
 
-From Phase 1 research, identify 10-15 target pages that exercise different parts of the API. Include:
-- Homepage
-- Scoreboard/listing pages for each major resource (scores, standings, teams)
-- Detail pages (individual team, player, event)
-- Search results
-- Stats/leaders pages
-- News pages
+From the primary sniff goal (Step 0 in the SKILL.md), derive the interactive steps a real user would take to accomplish that goal. This is NOT a list of pages to load -- it is a sequence of actions.
+
+Example for "Order a pizza for delivery" (Domino's):
+1. Click "Delivery" on homepage
+2. Enter a delivery address, click "Continue"
+3. Confirm a store from the results
+4. Browse the menu (click a category like "Specialty Pizzas")
+5. Add an item to cart (click "Add to Order")
+6. View cart (click cart icon)
+7. Proceed toward checkout (STOP before entering payment)
+
+Example for "Create an issue" (Linear):
+1. Click "New Issue" from the sidebar
+2. Fill in title and description
+3. Assign to a team/project
+4. Set priority and labels
+5. Submit (or preview if dry-run)
+
+Example for "Check today's scores" (ESPN):
+1. Load the homepage (scores are front-page content for read-heavy sites)
+2. Click a sport (NFL, NBA, etc.)
+3. Click a specific game for the box score / play-by-play
+4. Click standings
+5. Click a team for the team page
+
+Each step triggers API calls that page loads alone would miss. After the primary flow, add 1-2 secondary flows from the research brief's other top workflows (e.g., "Check rewards," "Track an order").
+
+**SPA interaction rule:** On each page/state, take a snapshot first. Look for interactive elements (buttons, forms, dropdowns, tabs). Click through them. SPAs fire API calls on interaction, not on page load. If you load a page and see no XHR activity, that means you need to interact with the page, not that there is nothing to find.
 
 **Step 2a.2: Collect API URLs**
 
@@ -356,15 +377,17 @@ If browser-use is not available, use agent-browser with Claude driving the explo
    agent-browser network har start
    ```
 
-2. **Explore the site** using the snapshot-reason-act loop:
-   - `agent-browser snapshot -i` to see the page
-   - Identify interactive elements: search boxes, filters, buttons, dropdowns, pagination
-   - Prioritize: search forms > filters > action buttons > dropdowns > pagination
+2. **Walk the user flow** using the snapshot-reason-act loop:
+   - Use the user flow plan from Step 2a.1 (same flow applies to both backends)
+   - For each step in the flow:
+     - `agent-browser snapshot -i` to see the current page state
+     - Find the interactive element for this step (button, form, link, dropdown)
+     - Click/fill/submit it
+     - `agent-browser wait --network-idle` after each interaction
+     - Apply sniff pacing between interactions (1s initial, adaptive per Sniff Pacing rules)
+   - After completing the primary flow, run 1-2 secondary flows
    - Skip: navigation links, footer links, social media buttons, cookie/consent banners
-   - Fill forms with realistic sample data based on the domain
-   - `agent-browser wait --network-idle` after each interaction
-   - Repeat for up to 5 rounds or until no new API endpoints appear for 2 consecutive rounds
-   - Apply sniff pacing between interactions (1s initial, adaptive per Sniff Pacing rules)
+   - Fill forms with realistic sample data based on the domain (real-looking addresses, names, etc.)
 
 3. **Capture response bodies** (agent-browser HAR omits them):
    ```bash
@@ -382,6 +405,20 @@ If browser-use is not available, use agent-browser with Claude driving the explo
    ```bash
    agent-browser network har stop "$DISCOVERY_DIR/sniff-capture.har"
    ```
+
+#### Step 2c: Thin-results safety check
+
+After completing the primary user flow capture (browser-use or agent-browser), count unique API endpoints discovered. If fewer than 5 unique endpoints:
+
+1. **Diagnose, don't accept.** Thin results from an SPA almost always mean the agent loaded pages without interacting. Ask yourself: did I click buttons? Did I fill forms? Did I submit anything? Did I scroll to trigger lazy loads? If the answer is "I mostly just navigated to URLs," that is the problem.
+
+2. **Re-sniff with interaction.** Go back to the page where results were thinnest. Take a snapshot. Find interactive elements. Click the most prominent one. Wait for network activity. Repeat for at least 3 interactions before accepting thin results.
+
+3. **Compare against known endpoints.** If Phase 1 research found community wrappers documenting N endpoints but the sniff found fewer than N/2, the sniff missed something. Community wrappers are a floor, not a ceiling -- they represent what someone else already reverse-engineered, often years ago. The real API surface is almost certainly larger.
+
+4. **Report the gap honestly.** If re-sniffing with interaction still produces thin results, report: "Sniff captured X endpoints but community wrappers document Y. The site may use WebSocket, protobuf, server-side rendering, or other techniques that resist browser capture." Do NOT conclude "the API has few endpoints" when the real answer may be "I didn't interact enough to trigger them."
+
+If the thin-results check triggers a re-sniff that discovers additional endpoints, merge the new captures with the originals before proceeding to Step 3.
 
 #### Step 3: Analyze capture
 
@@ -409,19 +446,26 @@ Write a structured sniff provenance report to `$DISCOVERY_DIR/sniff-report.md`. 
 
 The report must contain these sections:
 
-1. **Pages Visited** — List every URL browsed during the sniff, in order. Include the page purpose (e.g., "Homepage", "Search results for 'stripe'", "Team detail page").
+1. **User Goal Flow** — The primary sniff goal and each step attempted.
+   - Goal: [e.g., "Order a pizza for delivery"]
+   - Steps completed: [numbered list of steps taken, with which API operations each step triggered]
+   - Steps skipped: [any steps that couldn't be completed, with reason]
+   - Secondary flows attempted: [any additional workflows beyond the primary goal]
+   - Coverage: [X of Y planned steps completed]
 
-2. **Sniff Configuration** — Backend used (browser-use, agent-browser, or manual HAR), pacing settings (initial delay, final effective rate), and proxy pattern detection result (proxy-envelope detected / not detected, with the proxy URL if applicable).
+2. **Pages & Interactions** — List every URL browsed and interaction performed during the sniff, in order. Include the page purpose and what was clicked/filled/submitted (e.g., "Homepage -- clicked 'Delivery' button", "Address modal -- entered '350 5th Ave', clicked 'Continue'").
 
-3. **Endpoints Discovered** — A markdown table with columns: Method, Path, Status Code, Content-Type. One row per unique endpoint observed.
+3. **Sniff Configuration** — Backend used (browser-use, agent-browser, or manual HAR), pacing settings (initial delay, final effective rate), and proxy pattern detection result (proxy-envelope detected / not detected, with the proxy URL if applicable).
 
-4. **Coverage Analysis** — What resource types were exercised (e.g., "collections, workspaces, teams, categories") and what was likely missed. Compare against the Phase 1 research brief to identify gaps (e.g., "Brief mentions 'flows' but no flow endpoints were discovered during sniff").
+4. **Endpoints Discovered** — A markdown table with columns: Method, Path, Status Code, Content-Type. One row per unique endpoint observed.
 
-5. **Response Samples** — For each unique response shape (keyed by status code + content-type category), include a truncated sample:
+5. **Coverage Analysis** — What resource types were exercised (e.g., "collections, workspaces, teams, categories") and what was likely missed. Compare against the Phase 1 research brief to identify gaps (e.g., "Brief mentions 'flows' but no flow endpoints were discovered during sniff").
+
+6. **Response Samples** — For each unique response shape (keyed by status code + content-type category), include a truncated sample:
    - JSON/text responses: first 2KB or 100 lines, whichever is smaller
    - Binary responses (images, protobuf, etc.): skip content, include a metadata note: `Binary response: <content-type>, <size> bytes`
    - Aim for one sample per unique shape, not one per endpoint
 
-6. **Rate Limiting Events** — Any 429 responses encountered, delays applied, and effective sniff rate achieved (e.g., "Sniffed 7 endpoints at ~1.5 req/s effective rate, one 429 at request #4").
+7. **Rate Limiting Events** — Any 429 responses encountered, delays applied, and effective sniff rate achieved (e.g., "Sniffed 7 endpoints at ~1.5 req/s effective rate, one 429 at request #4").
 
-7. **Authentication Context** — Whether the sniff used an authenticated session. If yes: transfer method used (auto-connect / profile / headed login / HAR), which endpoints were only reachable with auth (e.g., "order history, saved addresses, rewards required login"), and confirmation that session state was excluded from manuscript archiving. If no: "No authenticated session used."
+8. **Authentication Context** — Whether the sniff used an authenticated session. If yes: transfer method used (auto-connect / profile / headed login / HAR), which endpoints were only reachable with auth (e.g., "order history, saved addresses, rewards required login"), and confirmation that session state was excluded from manuscript archiving. If no: "No authenticated session used."

@@ -601,7 +601,24 @@ When `AUTH_SESSION_AVAILABLE=false`, show only options 2-4 (the existing 3-optio
 
 ### If user approves sniff
 
-Read and follow [references/sniff-capture.md](references/sniff-capture.md) for the complete
+#### Step 0: Identify the User Goal
+
+Before building the capture plan, answer one question: **What does the end user of this CLI actually want to do?**
+
+Read the research brief's Top Workflows. The #1 workflow IS the primary sniff goal. State it in one sentence:
+- Domino's: "Order a pizza for delivery"
+- Linear: "Create an issue and assign it to a sprint"
+- Stripe: "Create a payment intent and confirm it"
+- ESPN: "Check today's scores and standings"
+- Notion: "Create a page and organize it in a database"
+
+If the API is read-only (news, weather, data feeds), the primary goal is "fetch and filter data" and the flow is search/filter/paginate rather than a multi-step transaction.
+
+The sniff will walk through this goal as an interactive user flow. Secondary workflows become secondary sniff passes if time permits.
+
+State the goal explicitly before proceeding: "Primary sniff goal: [goal]. I will walk through this as a user flow."
+
+Then read and follow [references/sniff-capture.md](references/sniff-capture.md) for the complete
 sniff implementation: tool detection, installation, session transfer, browser-use/agent-browser
 capture, HAR analysis, and discovery report writing.
 
