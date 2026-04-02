@@ -49,18 +49,23 @@ fi
 
 ## Strip auth from HAR captures before archiving
 
-Credentials can appear in three locations within HAR files:
-- **Headers:** `Authorization: Bearer <token>`, `Cookie: session=...`
+Credentials can appear in four locations within HAR files:
+- **Request headers:** `Authorization: Bearer <token>`, `Cookie: session=...`
+- **Response headers:** `Set-Cookie: session=<token>` (from auth flows)
 - **Query strings:** `?key=<value>`, `?api_key=<value>`, `?access_token=<value>`
-- **Cookies:** session tokens, auth cookies
+- **Cookies:** session tokens, auth cookies (both request and response)
 
-The archive step must strip all three, plus response bodies (for size):
+The archive step must strip all four, plus response bodies (for size):
 
 ```bash
 jq 'del(.log.entries[].response.content.text) |
-    # Remove auth headers
+    # Remove auth headers from requests
     (.log.entries[].request.headers) |= [.[] |
       select(.name | test("^(Authorization|Cookie|Set-Cookie|X-API-Key|X-Auth-Token)$"; "i") | not)
+    ] |
+    # Remove Set-Cookie from responses (contains session tokens from auth flows)
+    (.log.entries[].response.headers) |= [.[] |
+      select(.name | test("^(Set-Cookie)$"; "i") | not)
     ] |
     # Redact auth-like query string params
     (.log.entries[].request.queryString) |= [.[] |
@@ -69,7 +74,8 @@ jq 'del(.log.entries[].response.content.text) |
       else . end
     ] |
     # Remove cookies entirely (they often contain session tokens)
-    (.log.entries[].request.cookies) |= []
+    (.log.entries[].request.cookies) |= [] |
+    (.log.entries[].response.cookies) |= []
     ' "$har" > "${har}.stripped" 2>/dev/null && mv "${har}.stripped" "$har"
 ```
 
