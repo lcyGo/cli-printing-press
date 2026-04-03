@@ -195,14 +195,23 @@ If `$PUBLISH_REPO_DIR` does not exist:
    **Push access** (`HAS_PUSH` is `true`):
    ```bash
    # Clone directly — origin IS the upstream
-   REPO_URL="git@github.com:mvanhorn/printing-press-library.git"  # or HTTPS if no SSH
+   if [ "$USE_SSH" = "true" ]; then
+     REPO_URL="git@github.com:mvanhorn/printing-press-library.git"
+   else
+     REPO_URL="https://github.com/mvanhorn/printing-press-library.git"
+   fi
    git clone --depth 50 "$REPO_URL" "$PUBLISH_REPO_DIR"
    ```
 
    **No push access** (`HAS_PUSH` is `false`):
    ```bash
-   # Fork first, then clone the fork with upstream pointing at the canonical repo
-   gh repo fork mvanhorn/printing-press-library --clone=false 2>/dev/null || true
+   # Fork first — fail explicitly if forking is blocked
+   if ! gh repo fork mvanhorn/printing-press-library --clone=false 2>&1; then
+     echo "ERROR: Could not fork mvanhorn/printing-press-library."
+     echo "The repo may restrict forking, or you may already have a fork with a different name."
+     echo "Fork manually at https://github.com/mvanhorn/printing-press-library/fork"
+     exit 1
+   fi
    FORK="$GH_USER/printing-press-library"
 
    # Build URLs based on protocol preference
