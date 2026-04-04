@@ -22,9 +22,9 @@ func TestGenerateProjectsCompile(t *testing.T) {
 		specPath      string
 		expectedFiles int
 	}{
-		{name: "stytch", specPath: filepath.Join("..", "..", "testdata", "stytch.yaml"), expectedFiles: 30},
-		{name: "clerk", specPath: filepath.Join("..", "..", "testdata", "clerk.yaml"), expectedFiles: 35},
-		{name: "loops", specPath: filepath.Join("..", "..", "testdata", "loops.yaml"), expectedFiles: 33},
+		{name: "stytch", specPath: filepath.Join("..", "..", "testdata", "stytch.yaml"), expectedFiles: 31},
+		{name: "clerk", specPath: filepath.Join("..", "..", "testdata", "clerk.yaml"), expectedFiles: 36},
+		{name: "loops", specPath: filepath.Join("..", "..", "testdata", "loops.yaml"), expectedFiles: 34},
 	}
 
 	for _, tt := range tests {
@@ -445,16 +445,18 @@ func TestGeneratedOutput_MutatingCommandsHaveEnvelope(t *testing.T) {
 	assert.Contains(t, content, `envelope["success"] = false`)
 }
 
-func TestGeneratedOutput_GetCommandsLackEnvelope(t *testing.T) {
+func TestGeneratedOutput_GetCommandsLackMutationEnvelope(t *testing.T) {
 	t.Parallel()
 
 	outputDir := generatePetstore(t)
 
-	// GET command should NOT have confirmation envelope
+	// GET command should NOT have the mutation-style confirmation envelope
+	// (action/resource/status/success fields). It MAY have provenance wrapping
+	// via wrapWithProvenance when HasStore is true.
 	getGo, err := os.ReadFile(filepath.Join(outputDir, "internal", "cli", "pet_get-by-id.go"))
 	require.NoError(t, err)
 	content := string(getGo)
-	assert.NotContains(t, content, "envelope")
+	assert.NotContains(t, content, `"action"`)
 	assert.NotContains(t, content, "statusCode")
 }
 

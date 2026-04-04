@@ -67,6 +67,15 @@ func new{{camel .FuncPrefix}}{{camel .EndpointName}}Cmd(flags *rootFlags) *cobra
 
 {{- if or (eq .Endpoint.Method "GET") (eq .Endpoint.Method "HEAD")}}
 {{- if .Endpoint.Pagination}}
+{{- if .HasStore}}
+			data, prov, err := resolvePaginatedRead(c, flags, "{{lower .ResourceName}}", path, map[string]string{
+{{- range .Endpoint.Params}}
+{{- if and (not .Positional) (not .PathParam)}}
+				"{{.Name}}": fmt.Sprintf("%v", flag{{camel .Name}}),
+{{- end}}
+{{- end}}
+			}, flagAll, "{{.Endpoint.Pagination.CursorParam}}", "{{.Endpoint.Pagination.NextCursorPath}}", "{{.Endpoint.Pagination.HasMoreField}}")
+{{- else}}
 			data, err := paginatedGet(c, path, map[string]string{
 {{- range .Endpoint.Params}}
 {{- if and (not .Positional) (not .PathParam)}}
@@ -74,6 +83,7 @@ func new{{camel .FuncPrefix}}{{camel .EndpointName}}Cmd(flags *rootFlags) *cobra
 {{- end}}
 {{- end}}
 			}, flagAll, "{{.Endpoint.Pagination.CursorParam}}", "{{.Endpoint.Pagination.NextCursorPath}}", "{{.Endpoint.Pagination.HasMoreField}}")
+{{- end}}
 {{- else}}
 			params := map[string]string{}
 {{- range .Endpoint.Params}}
@@ -83,7 +93,11 @@ func new{{camel .FuncPrefix}}{{camel .EndpointName}}Cmd(flags *rootFlags) *cobra
 			}
 {{- end}}
 {{- end}}
+{{- if .HasStore}}
+			data, prov, err := resolveRead(c, flags, "{{lower .ResourceName}}", {{if .Endpoint.Pagination}}true{{else}}false{{end}}, path, params)
+{{- else}}
 			data, err := c.Get(path, params)
+{{- end}}
 {{- end}}
 {{- else if eq .Endpoint.Method "POST"}}
 			var body map[string]any
@@ -220,6 +234,30 @@ func new{{camel .FuncPrefix}}{{camel .EndpointName}}Cmd(flags *rootFlags) *cobra
 			}
 {{- end}}
 {{- if or (eq .Endpoint.Method "GET") (eq .Endpoint.Method "HEAD")}}
+{{- if .HasStore}}
+			// Print provenance to stderr for human-facing output
+			{
+				var countItems []json.RawMessage
+				_ = json.Unmarshal(data, &countItems)
+				printProvenance(cmd, len(countItems), prov)
+			}
+			// For JSON output, wrap with provenance envelope before passing through flags
+			if flags.asJSON || !isTerminal(cmd.OutOrStdout()) {
+				filtered := data
+				if flags.compact {
+					filtered = compactFields(filtered)
+				}
+				if flags.selectFields != "" {
+					filtered = filterFields(filtered, flags.selectFields)
+				}
+				wrapped, wrapErr := wrapWithProvenance(filtered, prov)
+				if wrapErr != nil {
+					return wrapErr
+				}
+				return printOutput(cmd.OutOrStdout(), wrapped, true)
+			}
+			// For all other output modes (table, csv, plain, quiet), use the standard pipeline
+{{- end}}
 			if wantsHumanTable(cmd.OutOrStdout(), flags) {
 				var items []map[string]any
 				if json.Unmarshal(data, &items) == nil && len(items) > 0 {

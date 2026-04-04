@@ -51,6 +51,15 @@ func new{{camel .PromotedName}}PromotedCmd(flags *rootFlags) *cobra.Command {
 {{- end}}
 
 {{- if .Endpoint.Pagination}}
+{{- if .HasStore}}
+			data, prov, err := resolvePaginatedRead(c, flags, "{{lower .ResourceName}}", path, map[string]string{
+{{- range .Endpoint.Params}}
+{{- if not .Positional}}
+				"{{.Name}}": fmt.Sprintf("%v", flag{{camel .Name}}),
+{{- end}}
+{{- end}}
+			}, flagAll, "{{.Endpoint.Pagination.CursorParam}}", "{{.Endpoint.Pagination.NextCursorPath}}", "{{.Endpoint.Pagination.HasMoreField}}")
+{{- else}}
 			data, err := paginatedGet(c, path, map[string]string{
 {{- range .Endpoint.Params}}
 {{- if not .Positional}}
@@ -58,6 +67,7 @@ func new{{camel .PromotedName}}PromotedCmd(flags *rootFlags) *cobra.Command {
 {{- end}}
 {{- end}}
 			}, flagAll, "{{.Endpoint.Pagination.CursorParam}}", "{{.Endpoint.Pagination.NextCursorPath}}", "{{.Endpoint.Pagination.HasMoreField}}")
+{{- end}}
 {{- else}}
 			params := map[string]string{}
 {{- range .Endpoint.Params}}
@@ -67,12 +77,39 @@ func new{{camel .PromotedName}}PromotedCmd(flags *rootFlags) *cobra.Command {
 			}
 {{- end}}
 {{- end}}
+{{- if .HasStore}}
+			data, prov, err := resolveRead(c, flags, "{{lower .ResourceName}}", {{if .Endpoint.Pagination}}true{{else}}false{{end}}, path, params)
+{{- else}}
 			data, err := c.Get(path, params)
+{{- end}}
 {{- end}}
 			if err != nil {
 				return classifyAPIError(err)
 			}
 
+{{- if .HasStore}}
+			// Print provenance to stderr
+			{
+				var countItems []json.RawMessage
+				_ = json.Unmarshal(data, &countItems)
+				printProvenance(cmd, len(countItems), prov)
+			}
+			// For JSON output, wrap with provenance envelope
+			if flags.asJSON || !isTerminal(cmd.OutOrStdout()) {
+				filtered := data
+				if flags.compact {
+					filtered = compactFields(filtered)
+				}
+				if flags.selectFields != "" {
+					filtered = filterFields(filtered, flags.selectFields)
+				}
+				wrapped, wrapErr := wrapWithProvenance(filtered, prov)
+				if wrapErr != nil {
+					return wrapErr
+				}
+				return printOutput(cmd.OutOrStdout(), wrapped, true)
+			}
+{{- end}}
 			if wantsHumanTable(cmd.OutOrStdout(), flags) {
 				var items []map[string]any
 				if json.Unmarshal(data, &items) == nil && len(items) > 0 {

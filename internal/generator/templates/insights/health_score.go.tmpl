@@ -6,8 +6,6 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"time"
 
 	"{{modulePath}}/internal/store"
@@ -33,8 +31,7 @@ A score of 100 means all items are fresh, assigned, and actively worked on.`,
   {{.Name}}-pp-cli health --json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if dbPath == "" {
-				home, _ := os.UserHomeDir()
-				dbPath = filepath.Join(home, ".config", "{{.Name}}-pp-cli", "store.db")
+				dbPath = defaultDBPath("{{.Name}}-pp-cli")
 			}
 
 			db, err := store.Open(dbPath)
@@ -164,7 +161,7 @@ A score of 100 means all items are fresh, assigned, and actively worked on.`,
 		},
 	}
 
-	cmd.Flags().StringVar(&dbPath, "db", "", "Database path (default: ~/.config/{{.Name}}-pp-cli/store.db)")
+	cmd.Flags().StringVar(&dbPath, "db", "", "Database path (default: ~/.local/share/{{.Name}}-pp-cli/data.db)")
 
 	return cmd
 }

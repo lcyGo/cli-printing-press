@@ -6,8 +6,6 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"time"
 
 	"{{modulePath}}/internal/store"
@@ -38,8 +36,7 @@ the specified number of days. Useful for identifying forgotten or blocked work.`
   {{.Name}}-pp-cli stale --days 30 --json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if dbPath == "" {
-				home, _ := os.UserHomeDir()
-				dbPath = filepath.Join(home, ".config", "{{.Name}}-pp-cli", "store.db")
+				dbPath = defaultDBPath("{{.Name}}-pp-cli")
 			}
 
 			db, err := store.Open(dbPath)
@@ -169,7 +166,7 @@ the specified number of days. Useful for identifying forgotten or blocked work.`
 
 	cmd.Flags().IntVar(&days, "days", 30, "Number of days without update to consider stale")
 	cmd.Flags().StringVar(&team, "team", "", "Filter by team identifier")
-	cmd.Flags().StringVar(&dbPath, "db", "", "Database path (default: ~/.config/{{.Name}}-pp-cli/store.db)")
+	cmd.Flags().StringVar(&dbPath, "db", "", "Database path (default: ~/.local/share/{{.Name}}-pp-cli/data.db)")
 	cmd.Flags().IntVar(&limit, "limit", 50, "Maximum items to show")
 
 	return cmd

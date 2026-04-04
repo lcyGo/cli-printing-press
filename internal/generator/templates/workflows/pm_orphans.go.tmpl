@@ -6,8 +6,6 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"{{modulePath}}/internal/store"
@@ -30,8 +28,7 @@ such as assignee, project, priority, or labels. Useful for triaging unowned work
   {{.Name}}-pp-cli orphans --json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if dbPath == "" {
-				home, _ := os.UserHomeDir()
-				dbPath = filepath.Join(home, ".config", "{{.Name}}-pp-cli", "store.db")
+				dbPath = defaultDBPath("{{.Name}}-pp-cli")
 			}
 
 			db, err := store.Open(dbPath)
@@ -154,7 +151,7 @@ such as assignee, project, priority, or labels. Useful for triaging unowned work
 		},
 	}
 
-	cmd.Flags().StringVar(&dbPath, "db", "", "Database path (default: ~/.config/{{.Name}}-pp-cli/store.db)")
+	cmd.Flags().StringVar(&dbPath, "db", "", "Database path (default: ~/.local/share/{{.Name}}-pp-cli/data.db)")
 	cmd.Flags().IntVar(&limit, "limit", 50, "Maximum items to show")
 
 	return cmd

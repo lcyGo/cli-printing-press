@@ -210,6 +210,17 @@ func (g *Generator) Generate() error {
 		}
 	}
 
+	// Early profiling: compute VisionSet before endpoint rendering so
+	// templates can check HasStore for data source resolution.
+	if g.VisionSet.IsZero() {
+		g.profile = profiler.Profile(g.Spec)
+		plan := g.profile.ToVisionaryPlan(g.Spec.Name)
+		g.VisionSet = SelectVisionTemplates(plan)
+	}
+	if g.profile == nil {
+		g.profile = profiler.Profile(g.Spec)
+	}
+
 	// Generate single files
 	singleFiles := map[string]string{
 		"main.go.tmpl":      filepath.Join("cmd", naming.CLI(g.Spec.Name), "main.go"),
@@ -279,6 +290,7 @@ func (g *Generator) Generate() error {
 				CommandPath  string
 				EndpointName string
 				Endpoint     spec.Endpoint
+				HasStore     bool
 				*spec.APISpec
 			}{
 				ResourceName: name,
@@ -286,6 +298,7 @@ func (g *Generator) Generate() error {
 				CommandPath:  name,
 				EndpointName: eName,
 				Endpoint:     endpoint,
+				HasStore:     g.VisionSet.Store,
 				APISpec:      g.Spec,
 			}
 			epPath := filepath.Join("internal", "cli", name+"_"+eName+".go")
@@ -321,6 +334,7 @@ func (g *Generator) Generate() error {
 					CommandPath  string
 					EndpointName string
 					Endpoint     spec.Endpoint
+					HasStore     bool
 					*spec.APISpec
 				}{
 					ResourceName: subName,
@@ -328,6 +342,7 @@ func (g *Generator) Generate() error {
 					CommandPath:  name + " " + subName,
 					EndpointName: eName,
 					Endpoint:     endpoint,
+					HasStore:     g.VisionSet.Store,
 					APISpec:      g.Spec,
 				}
 				epPath := filepath.Join("internal", "cli", name+"_"+subName+"_"+eName+".go")
@@ -367,16 +382,7 @@ func (g *Generator) Generate() error {
 		}
 	}
 
-	// Vision features: profile the API and render selected templates
-	if g.VisionSet.IsZero() {
-		// Auto-profile if no explicit vision set provided
-		g.profile = profiler.Profile(g.Spec)
-		plan := g.profile.ToVisionaryPlan(g.Spec.Name)
-		g.VisionSet = SelectVisionTemplates(plan)
-	}
-	if g.profile == nil {
-		g.profile = profiler.Profile(g.Spec)
-	}
+	// Vision features: profile already computed in early profiling above
 	schema := BuildSchema(g.Spec)
 
 	// Create store directory if needed
@@ -412,16 +418,22 @@ func (g *Generator) Generate() error {
 
 	visionData := struct {
 		*spec.APISpec
-		SyncableResources []profiler.SyncableResource
-		SearchableFields  map[string][]string
-		Tables            []TableDef
-		Pagination        profiler.PaginationProfile
+		SyncableResources    []profiler.SyncableResource
+		SearchableFields     map[string][]string
+		Tables               []TableDef
+		Pagination           profiler.PaginationProfile
+		SearchEndpointPath   string
+		SearchQueryParam     string
+		SearchEndpointMethod string
 	}{
-		APISpec:           g.Spec,
-		SyncableResources: g.profile.SyncableResources,
-		SearchableFields:  g.profile.SearchableFields,
-		Tables:            schema,
-		Pagination:        g.profile.Pagination,
+		APISpec:              g.Spec,
+		SyncableResources:    g.profile.SyncableResources,
+		SearchableFields:     g.profile.SearchableFields,
+		Tables:               schema,
+		Pagination:           g.profile.Pagination,
+		SearchEndpointPath:   g.profile.SearchEndpointPath,
+		SearchQueryParam:     g.profile.SearchQueryParam,
+		SearchEndpointMethod: g.profile.SearchEndpointMethod,
 	}
 
 	for _, tmplName := range g.VisionSet.TemplateNames() {
@@ -438,6 +450,13 @@ func (g *Generator) Generate() error {
 		}
 		if err := g.renderTemplate(tmplName, outPath, tmplData); err != nil {
 			return fmt.Errorf("rendering vision %s: %w", tmplName, err)
+		}
+	}
+
+	// Render data source resolution template when store is enabled
+	if g.VisionSet.Store {
+		if err := g.renderTemplate("data_source.go.tmpl", filepath.Join("internal", "cli", "data_source.go"), visionData); err != nil {
+			return fmt.Errorf("rendering data_source: %w", err)
 		}
 	}
 
@@ -513,12 +532,14 @@ func (g *Generator) Generate() error {
 			ResourceName string
 			EndpointName string
 			Endpoint     spec.Endpoint
+			HasStore     bool
 			*spec.APISpec
 		}{
 			PromotedName: pc.PromotedName,
 			ResourceName: pc.ResourceName,
 			EndpointName: pc.EndpointName,
 			Endpoint:     pc.Endpoint,
+			HasStore:     g.VisionSet.Store,
 			APISpec:      g.Spec,
 		}
 		promotedPath := filepath.Join("internal", "cli", "promoted_"+pc.PromotedName+".go")

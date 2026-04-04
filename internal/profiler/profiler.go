@@ -69,6 +69,15 @@ type APIProfile struct {
 	SyncableResources []SyncableResource
 	SearchableFields  map[string][]string
 
+	// SearchEndpointPath is the API path for live search (e.g., "/search", "/users/search").
+	// Empty if the API has no search endpoint.
+	SearchEndpointPath string
+	// SearchQueryParam is the query parameter name for the search endpoint (e.g., "q", "query").
+	// Defaults to "q" if a search endpoint exists but no recognized param is found.
+	SearchQueryParam string
+	// SearchEndpointMethod is the HTTP method for the search endpoint (GET or POST).
+	SearchEndpointMethod string
+
 	Domain     DomainSignals
 	Pagination PaginationProfile
 }
@@ -131,6 +140,30 @@ func Profile(s *spec.APISpec) *APIProfile {
 
 			if containsAny(endpointNameLower, []string{"search"}) || containsAny(pathLower, []string{"search"}) {
 				hasSearchEndpoint = true
+				// Prefer shorter/more general search paths (e.g., /search over /users/search)
+				if p.SearchEndpointPath == "" || len(endpoint.Path) < len(p.SearchEndpointPath) {
+					p.SearchEndpointPath = endpoint.Path
+					p.SearchEndpointMethod = strings.ToUpper(endpoint.Method)
+					// Find the query parameter for the search endpoint
+					p.SearchQueryParam = "q" // default
+					for _, param := range endpoint.Params {
+						pname := strings.ToLower(param.Name)
+						if pname == "q" || pname == "query" || pname == "search" || pname == "keyword" || pname == "term" {
+							p.SearchQueryParam = param.Name
+							break
+						}
+					}
+					// For POST search endpoints, check body params too
+					if p.SearchEndpointMethod == "POST" {
+						for _, param := range endpoint.Body {
+							pname := strings.ToLower(param.Name)
+							if pname == "q" || pname == "query" || pname == "search" || pname == "keyword" || pname == "term" {
+								p.SearchQueryParam = param.Name
+								break
+							}
+						}
+					}
+				}
 			}
 			if containsAny(pathLower, []string{"webhook", "event", "callback", "notification"}) {
 				p.HasRealtime = true

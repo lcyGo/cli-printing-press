@@ -6,8 +6,6 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 
 	"{{modulePath}}/internal/store"
 	"github.com/spf13/cobra"
@@ -36,8 +34,7 @@ work items, tickets, or tasks.`,
 			itemID := args[0]
 
 			if dbPath == "" {
-				home, _ := os.UserHomeDir()
-				dbPath = filepath.Join(home, ".config", "{{.Name}}-pp-cli", "store.db")
+				dbPath = defaultDBPath("{{.Name}}-pp-cli")
 			}
 
 			db, err := store.Open(dbPath)
@@ -162,7 +159,7 @@ work items, tickets, or tasks.`,
 		},
 	}
 
-	cmd.Flags().StringVar(&dbPath, "db", "", "Database path (default: ~/.config/{{.Name}}-pp-cli/store.db)")
+	cmd.Flags().StringVar(&dbPath, "db", "", "Database path (default: ~/.local/share/{{.Name}}-pp-cli/data.db)")
 	cmd.Flags().IntVar(&limit, "limit", 10, "Maximum number of similar items to show")
 
 	return cmd

@@ -284,6 +284,8 @@ func dbPath() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".local", "share", "{{.Name}}-pp-cli", "data.db")
 }
+// Note: MCP tools use their own dbPath() because they are in a separate package (main, not cli).
+// The CLI's defaultDBPath() in the cli package uses the same canonical path.
 
 {{- if .VisionSet.Sync}}
 

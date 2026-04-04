@@ -6,8 +6,6 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 
 	"{{modulePath}}/internal/store"
@@ -33,8 +31,7 @@ person. Helps identify overloaded team members and unbalanced workload.`,
   {{.Name}}-pp-cli load --json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if dbPath == "" {
-				home, _ := os.UserHomeDir()
-				dbPath = filepath.Join(home, ".config", "{{.Name}}-pp-cli", "store.db")
+				dbPath = defaultDBPath("{{.Name}}-pp-cli")
 			}
 
 			db, err := store.Open(dbPath)
@@ -179,7 +176,7 @@ person. Helps identify overloaded team members and unbalanced workload.`,
 		},
 	}
 
-	cmd.Flags().StringVar(&dbPath, "db", "", "Database path (default: ~/.config/{{.Name}}-pp-cli/store.db)")
+	cmd.Flags().StringVar(&dbPath, "db", "", "Database path (default: ~/.local/share/{{.Name}}-pp-cli/data.db)")
 	cmd.Flags().IntVar(&limit, "limit", 50, "Maximum entries to show")
 
 	return cmd
