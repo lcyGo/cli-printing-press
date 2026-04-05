@@ -75,6 +75,7 @@ func newGenerateCmd() *cobra.Command {
 	var clientPattern string
 	var researchDir string
 	var maxEndpointsPerResource int
+	var specURL string
 
 	cmd := &cobra.Command{
 		Use:   "generate",
@@ -336,6 +337,7 @@ func newGenerateCmd() *cobra.Command {
 			if err := pipeline.WriteManifestForGenerate(pipeline.GenerateManifestParams{
 				APIName:   apiSpec.Name,
 				SpecSrcs:  specFiles,
+				SpecURL:   specURL,
 				OutputDir: absOut,
 			}); err != nil {
 				fmt.Fprintf(os.Stderr, "warning: could not write manifest: %v\n", err)
@@ -372,6 +374,7 @@ func newGenerateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&clientPattern, "client-pattern", "", "HTTP client pattern: rest (default), proxy-envelope (wraps requests in POST envelope)")
 	cmd.Flags().StringVar(&researchDir, "research-dir", "", "Pipeline directory containing research.json and discovery/ for README source credits")
 	cmd.Flags().IntVar(&maxEndpointsPerResource, "max-endpoints-per-resource", 0, "Maximum endpoints per resource (default 50, raise for large APIs)")
+	cmd.Flags().StringVar(&specURL, "spec-url", "", "Original spec URL for provenance (use when --spec is a local file downloaded from a URL)")
 
 	return cmd
 }

@@ -75,6 +75,7 @@ func specChecksum(path string) (string, error) {
 type GenerateManifestParams struct {
 	APIName   string
 	SpecSrcs  []string // --spec args (URLs or file paths)
+	SpecURL   string   // --spec-url: explicit provenance URL (when --spec is a local downloaded file)
 	DocsURL   string   // --docs URL, if used
 	OutputDir string
 }
@@ -101,24 +102,40 @@ func WriteManifestForGenerate(p GenerateManifestParams) error {
 			m.SpecURL = src
 		} else {
 			m.SpecPath = src
+			// Compute checksum and format from the actual input spec file.
+			if data, err := os.ReadFile(src); err == nil {
+				m.SpecFormat = detectSpecFormat(data)
+				h := sha256.Sum256(data)
+				m.SpecChecksum = "sha256:" + hex.EncodeToString(h[:])
+			}
 		}
 	}
 
-	// Detect format and checksum from any spec file cached in the output dir.
-	for _, name := range []string{"spec.json", "spec.yaml", "spec.yml"} {
-		specFile := filepath.Join(p.OutputDir, name)
-		data, err := os.ReadFile(specFile)
-		if err != nil {
-			continue
+	// Explicit --spec-url overrides: when the user passed a local file that was
+	// downloaded from a URL, record the original URL for reproducibility.
+	if p.SpecURL != "" {
+		m.SpecURL = p.SpecURL
+	}
+
+	// Fallback: detect format and checksum from any spec file cached in the output dir.
+	if m.SpecFormat == "" || m.SpecChecksum == "" {
+		for _, name := range []string{"spec.json", "spec.yaml", "spec.yml"} {
+			specFile := filepath.Join(p.OutputDir, name)
+			data, err := os.ReadFile(specFile)
+			if err != nil {
+				continue
+			}
+			if m.SpecFormat == "" {
+				m.SpecFormat = detectSpecFormat(data)
+			}
+			if m.SpecChecksum == "" {
+				cs, err := specChecksum(specFile)
+				if err == nil {
+					m.SpecChecksum = cs
+				}
+			}
+			break
 		}
-		if m.SpecFormat == "" {
-			m.SpecFormat = detectSpecFormat(data)
-		}
-		cs, err := specChecksum(specFile)
-		if err == nil {
-			m.SpecChecksum = cs
-		}
-		break
 	}
 
 	// Look up catalog entry for category/description enrichment.
