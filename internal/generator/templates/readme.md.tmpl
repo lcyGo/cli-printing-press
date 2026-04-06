@@ -154,7 +154,7 @@ Exit codes: `0` success, `2` usage error, `3` not found, `4` auth error, `5` API
 This CLI ships a companion MCP server for use with Claude Desktop, Cursor, and other MCP-compatible tools.
 
 ### Claude Code
-{{- if eq .Auth.Type "api_key"}}
+{{- if and (eq .Auth.Type "api_key") .Auth.EnvVars}}
 
 ```bash
 claude mcp add {{.Name}} {{.Name}}-pp-mcp -e {{index .Auth.EnvVars 0}}=<your-key>
