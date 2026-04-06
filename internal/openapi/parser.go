@@ -260,6 +260,15 @@ func parse(data []byte, lenient bool) (*spec.APISpec, error) {
 	}
 	mapResources(doc, result, resourceBasePath)
 	mapTypes(doc, result)
+
+	// Post-parse sweep: if the spec has no authentication at all (not inferred
+	// from description keywords), mark every endpoint as NoAuth. The per-operation
+	// detection in mapResources handles explicit security:[] overrides; this sweep
+	// handles the case where the entire API is public.
+	if result.Auth.Type == "none" && !result.Auth.Inferred {
+		markAllEndpointsNoAuth(result.Resources)
+	}
+
 	var perEndpointHeaders map[string]map[string]string
 	result.RequiredHeaders, perEndpointHeaders = detectRequiredHeaders(doc, result.Auth)
 	applyHeaderOverrides(result, perEndpointHeaders)
@@ -1028,6 +1037,7 @@ func mapResources(doc *openapi3.T, out *spec.APISpec, basePath string) {
 			if strings.ToUpper(method) == "GET" {
 				endpoint.Pagination = detectPagination(endpoint.Params, op)
 			}
+			endpoint.NoAuth = operationAllowsAnonymous(op, doc)
 			targetEndpoints[endpointName] = endpoint
 		}
 
@@ -1047,6 +1057,55 @@ func mapResources(doc *openapi3.T, out *spec.APISpec, basePath string) {
 
 	assignEndpointAliases(out.Resources)
 	filterGlobalParams(out.Resources)
+}
+
+// operationAllowsAnonymous checks whether an operation can be called without
+// authentication. Returns true when:
+//   - The operation has security: [] (explicit opt-out)
+//   - The operation has security: [{}] (empty object = anonymous alternative)
+//   - The operation inherits global security and the global security is empty
+func operationAllowsAnonymous(op *openapi3.Operation, doc *openapi3.T) bool {
+	if op.Security != nil {
+		// Per-operation security declared
+		if len(*op.Security) == 0 {
+			return true // security: []
+		}
+		for _, req := range *op.Security {
+			if len(req) == 0 {
+				return true // security: [{}]
+			}
+		}
+		return false
+	}
+	// op.Security is nil — inherits global security
+	if doc.Security != nil && len(doc.Security) == 0 {
+		return true // global security: []
+	}
+	for _, req := range doc.Security {
+		if len(req) == 0 {
+			return true // global security: [{}]
+		}
+	}
+	return false
+}
+
+// markAllEndpointsNoAuth sets NoAuth=true on every endpoint across all
+// resources and sub-resources. Used when the spec has no authentication.
+func markAllEndpointsNoAuth(resources map[string]spec.Resource) {
+	for name, r := range resources {
+		for eName, e := range r.Endpoints {
+			e.NoAuth = true
+			r.Endpoints[eName] = e
+		}
+		for subName, sub := range r.SubResources {
+			for eName, e := range sub.Endpoints {
+				e.NoAuth = true
+				sub.Endpoints[eName] = e
+			}
+			r.SubResources[subName] = sub
+		}
+		resources[name] = r
+	}
 }
 
 func assignEndpointAliases(resources map[string]spec.Resource) {

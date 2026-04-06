@@ -1,6 +1,7 @@
 package openapi
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -723,7 +724,7 @@ func TestAuthTierPrecedence(t *testing.T) {
 		assert.False(t, parsed.Auth.Inferred, "explicit auth from securitySchemes should not be marked as inferred")
 	})
 
-	t.Run("query-param auth (tier 2) wins over description (tier 3)", func(t *testing.T) {
+	t.Run("query-param auth tier 2 wins over description tier 3", func(t *testing.T) {
 		// Build a minimal spec with auth-like query params on >30% of ops
 		// AND bearer keyword in description. Tier 2 should win.
 		doc := &openapi3.T{
@@ -759,4 +760,169 @@ func TestAuthTierPrecedence(t *testing.T) {
 		assert.Equal(t, "query", result.In, "tier 2 query-param auth should win over tier 3 description")
 		assert.False(t, result.Inferred, "query-param auth is not 'inferred from description'")
 	})
+}
+
+func TestNoAuthDetection(t *testing.T) {
+	t.Parallel()
+
+	t.Run("mixed-auth fixture: per-operation security overrides", func(t *testing.T) {
+		t.Parallel()
+		data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "openapi", "mixed-auth.yaml"))
+		require.NoError(t, err)
+
+		parsed, err := Parse(data)
+		require.NoError(t, err)
+
+		// stores.listStores has security: [] — should be NoAuth
+		stores := parsed.Resources["stores"]
+		require.NotNil(t, stores)
+		for _, e := range stores.Endpoints {
+			if e.Path == "/stores" && e.Method == "GET" {
+				assert.True(t, e.NoAuth, "stores GET with security:[] should be NoAuth")
+			}
+		}
+
+		// menus.getMenu has security: [{}] — should be NoAuth
+		menus := parsed.Resources["menus"]
+		require.NotNil(t, menus)
+		for _, e := range menus.Endpoints {
+			if e.Path == "/menus" && e.Method == "GET" {
+				assert.True(t, e.NoAuth, "menus GET with security:[{}] should be NoAuth")
+			}
+		}
+
+		// orders.listOrders inherits global ApiKeyAuth — should NOT be NoAuth
+		orders := parsed.Resources["orders"]
+		require.NotNil(t, orders)
+		for _, e := range orders.Endpoints {
+			if e.Path == "/orders" && e.Method == "GET" {
+				assert.False(t, e.NoAuth, "orders GET inheriting global auth should not be NoAuth")
+			}
+			if e.Path == "/orders" && e.Method == "POST" {
+				assert.False(t, e.NoAuth, "orders POST with explicit ApiKeyAuth should not be NoAuth")
+			}
+		}
+
+		// account.getAccount inherits global ApiKeyAuth — should NOT be NoAuth
+		account := parsed.Resources["account"]
+		require.NotNil(t, account)
+		for _, e := range account.Endpoints {
+			if e.Path == "/account" && e.Method == "GET" {
+				assert.False(t, e.NoAuth, "account GET inheriting global auth should not be NoAuth")
+			}
+		}
+	})
+
+	t.Run("spec with no auth at all marks all endpoints NoAuth", func(t *testing.T) {
+		t.Parallel()
+		// Build a spec with no securitySchemes, no global security
+		doc := &openapi3.T{
+			OpenAPI: "3.0.3",
+			Info:    &openapi3.Info{Title: "No Auth API", Version: "1.0.0"},
+			Paths:   &openapi3.Paths{},
+			Servers: openapi3.Servers{{URL: "https://api.example.com"}},
+		}
+		doc.Paths.Set("/items", &openapi3.PathItem{
+			Get: &openapi3.Operation{
+				Summary:   "List items",
+				Responses: openapi3.NewResponses(),
+			},
+		})
+		doc.Paths.Set("/items/{id}", &openapi3.PathItem{
+			Get: &openapi3.Operation{
+				Summary:   "Get item",
+				Responses: openapi3.NewResponses(),
+				Parameters: openapi3.Parameters{
+					&openapi3.ParameterRef{Value: &openapi3.Parameter{
+						Name: "id", In: "path", Required: true,
+						Schema: &openapi3.SchemaRef{Value: &openapi3.Schema{Type: &openapi3.Types{"string"}}},
+					}},
+				},
+			},
+		})
+
+		parsed, err := Parse(mustMarshalJSON(t, doc))
+		require.NoError(t, err)
+
+		assert.Equal(t, "none", parsed.Auth.Type)
+		// All endpoints should be NoAuth via post-parse sweep
+		for _, r := range parsed.Resources {
+			for eName, e := range r.Endpoints {
+				assert.True(t, e.NoAuth, "endpoint %s should be NoAuth in no-auth spec", eName)
+			}
+		}
+	})
+
+	t.Run("global security empty array marks inherited endpoints NoAuth", func(t *testing.T) {
+		t.Parallel()
+		// Use raw YAML to preserve the security: [] distinction
+		yamlSpec := []byte(`openapi: "3.0.3"
+info:
+  title: Global Empty Security
+  version: "1.0.0"
+servers:
+  - url: https://api.example.com
+security: []
+components:
+  securitySchemes:
+    ApiKey:
+      type: apiKey
+      name: X-Api-Key
+      in: header
+paths:
+  /public:
+    get:
+      summary: Public endpoint
+      responses:
+        "200":
+          description: OK
+  /private:
+    get:
+      summary: Private endpoint
+      security:
+        - ApiKey: []
+      responses:
+        "200":
+          description: OK
+`)
+		parsed, err := Parse(yamlSpec)
+		require.NoError(t, err)
+
+		// /public inherits global security:[] — should be NoAuth
+		foundPublic := false
+		foundPrivate := false
+		for _, r := range parsed.Resources {
+			for _, e := range r.Endpoints {
+				if e.Path == "/public" {
+					assert.True(t, e.NoAuth, "/public should be NoAuth from global security:[]")
+					foundPublic = true
+				}
+				if e.Path == "/private" {
+					assert.False(t, e.NoAuth, "/private has explicit ApiKey requirement")
+					foundPrivate = true
+				}
+			}
+		}
+		assert.True(t, foundPublic, "should have found /public endpoint")
+		assert.True(t, foundPrivate, "should have found /private endpoint")
+	})
+
+	t.Run("petstore still parses without regression", func(t *testing.T) {
+		t.Parallel()
+		data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "openapi", "petstore.yaml"))
+		require.NoError(t, err)
+
+		parsed, err := Parse(data)
+		require.NoError(t, err)
+
+		assert.Equal(t, "petstore", parsed.Name)
+		assert.True(t, len(parsed.Resources) > 0, "petstore should have resources")
+	})
+}
+
+func mustMarshalJSON(t *testing.T, v any) []byte {
+	t.Helper()
+	data, err := json.Marshal(v)
+	require.NoError(t, err)
+	return data
 }

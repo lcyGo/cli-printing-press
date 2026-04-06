@@ -149,6 +149,56 @@ This CLI is designed for AI agent consumption:
 
 Exit codes: `0` success, `2` usage error, `3` not found, `4` auth error, `5` API error, `7` rate limited, `10` config error.
 
+## Use as MCP Server
+
+This CLI ships a companion MCP server for use with Claude Desktop, Cursor, and other MCP-compatible tools.
+
+### Claude Code
+{{- if eq .Auth.Type "api_key"}}
+
+```bash
+claude mcp add {{.Name}} {{.Name}}-pp-mcp -e {{index .Auth.EnvVars 0}}=<your-key>
+```
+{{- else if or (eq .Auth.Type "cookie") (eq .Auth.Type "composed")}}
+
+```bash
+# Some tools work without auth. For full access, set up auth first:
+{{.Name}}-pp-cli auth login --chrome
+
+claude mcp add {{.Name}} {{.Name}}-pp-mcp
+```
+{{- else if or (eq .Auth.Type "oauth2") (eq .Auth.Type "bearer_token")}}
+
+```bash
+# Set up auth first:
+{{.Name}}-pp-cli auth login
+
+claude mcp add {{.Name}} {{.Name}}-pp-mcp
+```
+{{- else}}
+
+```bash
+claude mcp add {{.Name}} {{.Name}}-pp-mcp
+```
+{{- end}}
+
+### Claude Desktop
+
+Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "{{.Name}}": {
+      "command": "{{.Name}}-pp-mcp"{{- if and .Auth.EnvVars (ne .Auth.Type "none") (ne .Auth.Type "cookie") (ne .Auth.Type "composed")}},
+      "env": {
+        "{{index .Auth.EnvVars 0}}": "<your-key>"
+      }{{- end}}
+    }
+  }
+}
+```
+
 ## Cookbook
 
 Common workflows and recipes:

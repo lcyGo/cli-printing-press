@@ -199,6 +199,66 @@ resources:
 	})
 }
 
+func TestEndpointNoAuth(t *testing.T) {
+	t.Parallel()
+
+	t.Run("parse YAML with no_auth set", func(t *testing.T) {
+		t.Parallel()
+		input := `
+name: test
+base_url: http://x
+resources:
+  stores:
+    description: Stores
+    endpoints:
+      list:
+        method: GET
+        path: /stores
+        no_auth: true
+`
+		var s APISpec
+		require.NoError(t, yaml.Unmarshal([]byte(input), &s))
+		require.NoError(t, s.Validate())
+		ep := s.Resources["stores"].Endpoints["list"]
+		assert.True(t, ep.NoAuth)
+	})
+
+	t.Run("parse YAML without no_auth field", func(t *testing.T) {
+		t.Parallel()
+		input := `
+name: test
+base_url: http://x
+resources:
+  users:
+    description: Users
+    endpoints:
+      list:
+        method: GET
+        path: /users
+`
+		var s APISpec
+		require.NoError(t, yaml.Unmarshal([]byte(input), &s))
+		ep := s.Resources["users"].Endpoints["list"]
+		assert.False(t, ep.NoAuth)
+	})
+
+	t.Run("marshal with no_auth true includes field", func(t *testing.T) {
+		t.Parallel()
+		ep := Endpoint{Method: "GET", Path: "/stores", NoAuth: true}
+		data, err := yaml.Marshal(ep)
+		require.NoError(t, err)
+		assert.Contains(t, string(data), "no_auth: true")
+	})
+
+	t.Run("marshal with no_auth false omits field", func(t *testing.T) {
+		t.Parallel()
+		ep := Endpoint{Method: "GET", Path: "/users"}
+		data, err := yaml.Marshal(ep)
+		require.NoError(t, err)
+		assert.NotContains(t, string(data), "no_auth")
+	})
+}
+
 // --- Unit 5: YAML Format Safety Net Tests ---
 
 func TestParseBytesYAMLVariations(t *testing.T) {
