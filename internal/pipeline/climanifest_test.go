@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mvanhorn/cli-printing-press/internal/spec"
 	"github.com/mvanhorn/cli-printing-press/internal/version"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -291,6 +292,58 @@ func TestPublishWorkingCLIManifestWithoutSpec(t *testing.T) {
 	assert.Empty(t, got.SpecFormat)
 }
 
+func TestPublishWorkingCLIWritesMCPMetadataForInternalSpec(t *testing.T) {
+	home := setPressTestEnv(t)
+
+	workingDir := filepath.Join(home, "working", "internal-spec-pp-cli")
+	require.NoError(t, os.MkdirAll(workingDir, 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(workingDir, "main.go"),
+		[]byte("package main\nfunc main() {}"),
+		0o644,
+	))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(workingDir, "spec.json"),
+		[]byte(`
+name: internal-spec
+base_url: https://api.example.com
+auth:
+  type: bearer_token
+  env_vars:
+    - INTERNAL_SPEC_TOKEN
+resources:
+  items:
+    description: Items
+    endpoints:
+      list:
+        method: GET
+        path: /items
+        no_auth: true
+`),
+		0o644,
+	))
+
+	state := NewState("internal-spec", workingDir)
+	require.NoError(t, os.MkdirAll(filepath.Dir(state.StatePath()), 0o755))
+	require.NoError(t, state.Save())
+
+	finalDir, err := PublishWorkingCLI(state, filepath.Join(home, "library", "internal-spec-pp-cli"))
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(filepath.Join(finalDir, CLIManifestFilename))
+	require.NoError(t, err)
+
+	var got CLIManifest
+	require.NoError(t, json.Unmarshal(data, &got))
+	assert.Equal(t, "internal", got.SpecFormat)
+	assert.Equal(t, "internal-spec-pp-mcp", got.MCPBinary)
+	assert.Equal(t, 1, got.MCPToolCount)
+	assert.Equal(t, 1, got.MCPPublicToolCount)
+	assert.Equal(t, "full", got.MCPReady)
+	assert.Equal(t, "bearer_token", got.AuthType)
+	assert.Equal(t, []string{"INTERNAL_SPEC_TOKEN"}, got.AuthEnvVars)
+}
+
 func TestWriteManifestForGenerateWithSpecURL(t *testing.T) {
 	dir := t.TempDir()
 
@@ -517,6 +570,7 @@ func TestWriteSmitheryYAML(t *testing.T) {
 		s := string(content)
 		assert.Contains(t, s, "name: stripe-pp-mcp")
 		assert.Contains(t, s, "description: Stripe payments API")
+		assert.Contains(t, s, "command: go run ./cmd/stripe-pp-mcp")
 		assert.Contains(t, s, "STRIPE_API_KEY")
 		assert.Contains(t, s, "required: true")
 	})
@@ -607,4 +661,30 @@ func TestDetectSpecFormat(t *testing.T) {
 			assert.Equal(t, tt.expected, detectSpecFormat(tt.data))
 		})
 	}
+}
+
+func TestPopulateMCPMetadata(t *testing.T) {
+	var m CLIManifest
+	populateMCPMetadata(&m, &spec.APISpec{
+		Name: "test",
+		Auth: spec.AuthConfig{
+			Type:    "cookie",
+			EnvVars: []string{"TEST_AUTH"},
+		},
+		Resources: map[string]spec.Resource{
+			"items": {
+				Endpoints: map[string]spec.Endpoint{
+					"list":   {Method: "GET", Path: "/items", NoAuth: true},
+					"create": {Method: "POST", Path: "/items"},
+				},
+			},
+		},
+	})
+
+	assert.Equal(t, "test-pp-mcp", m.MCPBinary)
+	assert.Equal(t, 2, m.MCPToolCount)
+	assert.Equal(t, 1, m.MCPPublicToolCount)
+	assert.Equal(t, "partial", m.MCPReady)
+	assert.Equal(t, "cookie", m.AuthType)
+	assert.Equal(t, []string{"TEST_AUTH"}, m.AuthEnvVars)
 }

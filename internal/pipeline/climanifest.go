@@ -101,6 +101,19 @@ func computeMCPReady(authType string, publicTools int) string {
 	}
 }
 
+func populateMCPMetadata(m *CLIManifest, parsed *spec.APISpec) {
+	if parsed == nil {
+		return
+	}
+	total, public := parsed.CountMCPTools()
+	m.MCPBinary = naming.MCP(parsed.Name)
+	m.MCPToolCount = total
+	m.MCPPublicToolCount = public
+	m.MCPReady = computeMCPReady(parsed.Auth.Type, public)
+	m.AuthType = parsed.Auth.Type
+	m.AuthEnvVars = parsed.Auth.EnvVars
+}
+
 // GenerateManifestParams holds the information available at generate time
 // for writing a CLI manifest. Unlike PublishWorkingCLI (which has full
 // PipelineState), the standalone generate command only knows the spec
@@ -182,13 +195,7 @@ func WriteManifestForGenerate(p GenerateManifestParams) error {
 
 	// Populate MCP metadata from the parsed spec.
 	if p.Spec != nil {
-		m.MCPBinary = naming.MCP(p.Spec.Name)
-		total, public := p.Spec.CountMCPTools()
-		m.MCPToolCount = total
-		m.MCPPublicToolCount = public
-		m.MCPReady = computeMCPReady(p.Spec.Auth.Type, public)
-		m.AuthType = p.Spec.Auth.Type
-		m.AuthEnvVars = p.Spec.Auth.EnvVars
+		populateMCPMetadata(&m, p.Spec)
 	}
 	if len(p.NovelFeatures) > 0 {
 		m.NovelFeatures = p.NovelFeatures

@@ -167,11 +167,24 @@ claude mcp add {{.Name}} {{.Name}}-pp-mcp -e {{index .Auth.EnvVars 0}}=<your-key
 
 claude mcp add {{.Name}} {{.Name}}-pp-mcp
 ```
-{{- else if or (eq .Auth.Type "oauth2") (eq .Auth.Type "bearer_token")}}
+{{- else if eq .Auth.Type "oauth2"}}
 
 ```bash
 # Set up auth first:
 {{.Name}}-pp-cli auth login
+
+claude mcp add {{.Name}} {{.Name}}-pp-mcp
+```
+{{- else if and (eq .Auth.Type "bearer_token") .Auth.EnvVars}}
+
+```bash
+claude mcp add {{.Name}} {{.Name}}-pp-mcp -e {{index .Auth.EnvVars 0}}=<your-token>
+```
+{{- else if eq .Auth.Type "bearer_token"}}
+
+```bash
+# Set up auth first:
+{{.Name}}-pp-cli auth set-token YOUR_TOKEN_HERE
 
 claude mcp add {{.Name}} {{.Name}}-pp-mcp
 ```

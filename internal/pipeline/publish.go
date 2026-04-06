@@ -12,8 +12,10 @@ import (
 
 	"github.com/mvanhorn/cli-printing-press/catalog"
 	catalogpkg "github.com/mvanhorn/cli-printing-press/internal/catalog"
+	"github.com/mvanhorn/cli-printing-press/internal/graphql"
 	"github.com/mvanhorn/cli-printing-press/internal/naming"
 	"github.com/mvanhorn/cli-printing-press/internal/openapi"
+	"github.com/mvanhorn/cli-printing-press/internal/spec"
 	"github.com/mvanhorn/cli-printing-press/internal/version"
 
 	"gopkg.in/yaml.v3"
@@ -201,6 +203,20 @@ func writeCLIManifestForPublish(state *PipelineState, dir string) error {
 		RunID:                state.RunID,
 	}
 
+	// Carry forward metadata from the generated manifest when publish-time
+	// parsing is unavailable or lossy for the original spec format.
+	if existingData, err := os.ReadFile(filepath.Join(dir, CLIManifestFilename)); err == nil {
+		var existing CLIManifest
+		if json.Unmarshal(existingData, &existing) == nil {
+			m.MCPBinary = existing.MCPBinary
+			m.MCPToolCount = existing.MCPToolCount
+			m.MCPPublicToolCount = existing.MCPPublicToolCount
+			m.MCPReady = existing.MCPReady
+			m.AuthType = existing.AuthType
+			m.AuthEnvVars = existing.AuthEnvVars
+		}
+	}
+
 	// Detect spec format and compute checksum from the spec file in the
 	// working directory. spec.json only exists when specFlag is --spec;
 	// for --docs runs it won't be present and these fields stay empty.
@@ -212,16 +228,23 @@ func writeCLIManifestForPublish(state *PipelineState, dir string) error {
 			m.SpecChecksum = checksum
 		}
 
-		// Populate MCP metadata from the spec. Non-blocking: if parsing
-		// fails, MCP fields stay empty and smithery.yaml won't be written.
-		if parsed, parseErr := openapi.Parse(data); parseErr == nil {
-			m.MCPBinary = naming.MCP(parsed.Name)
-			total, public := parsed.CountMCPTools()
-			m.MCPToolCount = total
-			m.MCPPublicToolCount = public
-			m.MCPReady = computeMCPReady(parsed.Auth.Type, public)
-			m.AuthType = parsed.Auth.Type
-			m.AuthEnvVars = parsed.Auth.EnvVars
+		// Populate MCP metadata from the source spec when possible.
+		// If parsing fails, keep any carried-forward values from the generated
+		// manifest so non-OpenAPI CLIs do not lose MCP metadata at publish time.
+		var (
+			parsed   *spec.APISpec
+			parseErr error
+		)
+		switch m.SpecFormat {
+		case "openapi3":
+			parsed, parseErr = openapi.Parse(data)
+		case "graphql":
+			parsed, parseErr = graphql.ParseSDLBytes(specFile, data)
+		case "internal":
+			parsed, parseErr = spec.ParseBytes(data)
+		}
+		if parseErr == nil {
+			populateMCPMetadata(&m, parsed)
 		}
 	}
 
@@ -289,7 +312,7 @@ func writeSmitheryYAML(dir string) error {
 		Name:        m.MCPBinary,
 		Description: desc,
 		StartCommand: smitheryStartCommand{
-			Command: "./" + m.MCPBinary,
+			Command: "go run ./cmd/" + m.MCPBinary,
 		},
 	}
 
