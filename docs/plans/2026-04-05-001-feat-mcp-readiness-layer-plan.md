@@ -161,7 +161,7 @@ Even cookie-auth CLIs like Pagliacci Pizza have public endpoints (store finder, 
   - If `op.Security != nil` and any element is an empty map → `endpoint.NoAuth = true` (anonymous alternative)
   - If `op.Security == nil` → leave `NoAuth` as false (inherits global)
 
-  **Path 2 — Global security detection (in `mapResources()`, needs `doc` passed in):**
+  **Path 2 — Global security detection (in `mapResources()`, `doc` already available as first parameter):**
   Also check the global `security` array on the OpenAPI document. When `doc.Security` is non-nil but empty (`security: []` at root level), ALL operations without their own per-operation security inherit anonymous access. For each endpoint where `op.Security == nil` and global security is explicitly empty, set `endpoint.NoAuth = true`. This handles specs that define securitySchemes (for optional use) but declare `security: []` globally.
 
   **Path 3 — Post-parse sweep:**
@@ -303,7 +303,7 @@ Even cookie-auth CLIs like Pagliacci Pizza have public endpoints (store finder, 
 
   **MCP binary rename — all template occurrences:**
   - `goreleaser.yaml.tmpl`: build id (line 21), main path (line 22), binary name (line 23), brew install (line 54) — 4 occurrences of `{{.Name}}-mcp`
-  - `makefile.tmpl`: build-mcp target (line 20), install-mcp target (line 23) — 2 occurrences
+  - `makefile.tmpl`: build-mcp target (line 20, 2 occurrences), install-mcp target (line 23, 1 occurrence) — 3 string replacements across 2 lines
   - `main_mcp.go.tmpl`: server name string (line 16) — 1 occurrence
   - Verification: grep generated output for old suffix `-mcp"` (without `-pp-`) to confirm no remnants
 
@@ -364,7 +364,7 @@ Even cookie-auth CLIs like Pagliacci Pizza have public endpoints (store finder, 
   - Modify: `internal/pipeline/publish.go` (companion to `writeCLIManifestForPublish()`)
 
   **Approach:**
-  Write a `smithery.yaml` as a companion function called from the same sites as `writeCLIManifestForPublish()`. There are three callers that must all produce smithery.yaml:
+  Write a `smithery.yaml` as a companion function called from the same sites as `writeCLIManifestForPublish()`. There are two callers:
   1. `PublishWorkingCLI()` at `internal/pipeline/publish.go:109`
   2. `PromoteWorkingCLI()` at `internal/pipeline/lock.go:221` (primary fullrun path — the pipeline calls this)
 
