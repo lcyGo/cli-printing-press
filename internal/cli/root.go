@@ -31,8 +31,8 @@ import (
 
 func Execute() error {
 	rootCmd := &cobra.Command{
-		Use:           "printing-press",
-		Short:         "Describe your API. Get a production CLI.",
+		Use:          "printing-press",
+		Short:        "Describe your API. Get a production CLI.",
 		SilenceUsage: true,
 		Version:      version.Version,
 	}
@@ -75,6 +75,7 @@ func newGenerateCmd() *cobra.Command {
 	var researchDir string
 	var maxEndpointsPerResource int
 	var specURL string
+	var planFile string
 
 	cmd := &cobra.Command{
 		Use:   "generate",
@@ -210,8 +211,59 @@ func newGenerateCmd() *cobra.Command {
 				return nil
 			}
 
+			if planFile != "" {
+				planData, err := os.ReadFile(planFile)
+				if err != nil {
+					return &ExitError{Code: ExitInputError, Err: fmt.Errorf("reading plan file: %w", err)}
+				}
+				planSpec := generator.ParsePlan(string(planData))
+				if planSpec.CLIName == "" {
+					if cliName != "" {
+						planSpec.CLIName = cliName
+					} else {
+						return &ExitError{Code: ExitInputError, Err: fmt.Errorf("plan has no CLI name and --name was not provided")}
+					}
+				}
+				if cliName != "" {
+					planSpec.CLIName = cliName
+				}
+				if len(planSpec.Commands) == 0 {
+					return &ExitError{Code: ExitInputError, Err: fmt.Errorf("plan contains no command definitions")}
+				}
+
+				explicitOutput := outputDir != ""
+				if outputDir == "" {
+					outputDir = pipeline.DefaultOutputDir(planSpec.CLIName)
+				}
+				absOut, err := filepath.Abs(outputDir)
+				if err != nil {
+					return fmt.Errorf("resolving output path: %w", err)
+				}
+				absOut, err = claimOrForce(absOut, force, explicitOutput)
+				if err != nil {
+					return &ExitError{Code: ExitInputError, Err: err}
+				}
+
+				if err := generator.GenerateFromPlan(planSpec, absOut); err != nil {
+					return &ExitError{Code: ExitGenerationError, Err: fmt.Errorf("generating from plan: %w", err)}
+				}
+
+				fmt.Fprintf(os.Stderr, "Generated %s at %s (from plan)\n", naming.CLI(planSpec.CLIName), absOut)
+				if asJSON {
+					if err := json.NewEncoder(os.Stdout).Encode(map[string]interface{}{
+						"name":       planSpec.CLIName,
+						"output_dir": absOut,
+						"plan_file":  planFile,
+						"commands":   len(planSpec.Commands),
+					}); err != nil {
+						return fmt.Errorf("encoding JSON: %w", err)
+					}
+				}
+				return nil
+			}
+
 			if len(specFiles) == 0 {
-				return &ExitError{Code: ExitInputError, Err: fmt.Errorf("--spec is required")}
+				return &ExitError{Code: ExitInputError, Err: fmt.Errorf("--spec is required (or use --plan for plan-driven generation)")}
 			}
 
 			if maxEndpointsPerResource > 0 {
@@ -389,6 +441,7 @@ func newGenerateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&researchDir, "research-dir", "", "Pipeline directory containing research.json and discovery/ for README source credits")
 	cmd.Flags().IntVar(&maxEndpointsPerResource, "max-endpoints-per-resource", 0, "Maximum endpoints per resource (default 50, raise for large APIs)")
 	cmd.Flags().StringVar(&specURL, "spec-url", "", "Original spec URL for provenance (use when --spec is a local file downloaded from a URL)")
+	cmd.Flags().StringVar(&planFile, "plan", "", "Path to a markdown plan document for plan-driven generation (instead of --spec)")
 
 	return cmd
 }
