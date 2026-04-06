@@ -356,6 +356,17 @@ func (s *Store) UpsertBatch(resourceType string, items []json.RawMessage) error 
 		if err != nil {
 			return fmt.Errorf("upserting %s/%s: %w", resourceType, id, err)
 		}
+
+		// Update FTS index (non-fatal — matches upsertGenericResourceTx pattern)
+		if _, ftsErr := tx.Exec(`DELETE FROM resources_fts WHERE id = ?`, id); ftsErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: FTS index cleanup failed for %s/%s: %v\n", resourceType, id, ftsErr)
+		}
+		if _, ftsErr := tx.Exec(
+			`INSERT INTO resources_fts (id, resource_type, content) VALUES (?, ?, ?)`,
+			id, resourceType, string(item),
+		); ftsErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: FTS index update failed for %s/%s: %v\n", resourceType, id, ftsErr)
+		}
 	}
 
 	return tx.Commit()

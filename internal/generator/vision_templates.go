@@ -18,6 +18,32 @@ type VisionTemplateSet struct {
 	Insights  []string
 }
 
+// CmdNames returns a set of command names that the VisionSet registers in
+// root.go. Used to exclude these from the Resources loop to prevent duplicates
+// when an API has an endpoint with the same name (e.g., /analytics).
+func (s VisionTemplateSet) CmdNames() map[string]bool {
+	names := map[string]bool{}
+	if s.Export {
+		names["export"] = true
+	}
+	if s.Import {
+		names["import"] = true
+	}
+	if s.Search {
+		names["search"] = true
+	}
+	if s.Sync {
+		names["sync"] = true
+	}
+	if s.Tail {
+		names["tail"] = true
+	}
+	if s.Analytics {
+		names["analytics"] = true
+	}
+	return names
+}
+
 func (s VisionTemplateSet) IsZero() bool {
 	return !s.Export && !s.Import && !s.Store && !s.Search &&
 		!s.Sync && !s.Tail && !s.Analytics && !s.MCP &&

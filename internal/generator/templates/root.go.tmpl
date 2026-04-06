@@ -98,7 +98,7 @@ func Execute() error {
 	}
 
 {{- range $name, $resource := .Resources}}
-{{- if and (not (index $.PromotedResourceNames $name)) (ne $name "auth")}}
+{{- if and (not (index $.PromotedResourceNames $name)) (ne $name "auth") (not (index $.VisionCmdNames $name))}}
 	rootCmd.AddCommand(new{{camel $name}}Cmd(&flags))
 {{- end}}
 {{- end}}

@@ -676,6 +676,7 @@ func (g *Generator) Generate() error {
 	rootData := struct {
 		*spec.APISpec
 		VisionSet             VisionTemplateSet
+		VisionCmdNames        map[string]bool
 		WorkflowConstructors  []string
 		InsightConstructors   []string
 		PromotedCommands      []PromotedCommand
@@ -683,6 +684,7 @@ func (g *Generator) Generate() error {
 	}{
 		APISpec:               g.Spec,
 		VisionSet:             g.VisionSet,
+		VisionCmdNames:        g.VisionSet.CmdNames(),
 		WorkflowConstructors:  renderedWorkflowConstructors,
 		InsightConstructors:   renderedInsightConstructors,
 		PromotedCommands:      promotedCommands,
