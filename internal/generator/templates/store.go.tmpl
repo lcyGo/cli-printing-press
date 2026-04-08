@@ -144,17 +144,18 @@ func (s *Store) upsertGenericResourceTx(tx *sql.Tx, resourceType, id string, dat
 		return err
 	}
 
-	_, err = tx.Exec(`DELETE FROM resources_fts WHERE id = ?`, id)
-	if err != nil {
+	ftsRowid := ftsRowID(id)
+	// Use explicit rowid for FTS5 compatibility with modernc.org/sqlite.
+	// Standard DELETE WHERE column=? may not work on FTS5 virtual tables.
+	if _, err = tx.Exec(`DELETE FROM resources_fts WHERE rowid = ?`, ftsRowid); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: FTS index cleanup failed: %v\n", err)
 	}
 
-	_, err = tx.Exec(
-		`INSERT INTO resources_fts (id, resource_type, content)
-		 VALUES (?, ?, ?)`,
-		id, resourceType, string(data),
-	)
-	if err != nil {
+	if _, err = tx.Exec(
+		`INSERT INTO resources_fts (rowid, id, resource_type, content)
+		 VALUES (?, ?, ?, ?)`,
+		ftsRowid, id, resourceType, string(data),
+	); err != nil {
 		// FTS insert failure is non-fatal
 		fmt.Fprintf(os.Stderr, "warning: FTS index update failed: %v\n", err)
 	}
@@ -252,6 +253,17 @@ func extractObjectID(obj map[string]any) string {
 	return ""
 }
 
+// ftsRowID derives a deterministic rowid from a string ID for use with FTS5.
+// modernc.org/sqlite's FTS5 implementation may not support DELETE WHERE column=?
+// on virtual tables, so we use explicit rowids and DELETE WHERE rowid=? instead.
+func ftsRowID(id string) int64 {
+	var h uint64
+	for _, c := range id {
+		h = h*31 + uint64(c)
+	}
+	return int64(h & 0x7FFFFFFFFFFFFFFF) // ensure positive
+}
+
 func lookupFieldValue(obj map[string]any, snakeKey string) any {
 	if v, ok := obj[snakeKey]; ok {
 		return v
@@ -311,11 +323,13 @@ func (s *Store) Upsert{{pascal .Name}}(data json.RawMessage) error {
 	}
 {{- if and .FTS5 (not .FTS5Triggers)}}
 
-	// Standalone FTS: manually sync since content-sync triggers aren't used
-	// (FTS fields are inside the JSON data column, not extracted table columns)
-	_, _ = tx.Exec(`DELETE FROM {{.Name}}_fts WHERE id = ?`, id)
+	// Standalone FTS: manually sync since content-sync triggers aren't used.
+	// Use explicit rowid for FTS5 compatibility with modernc.org/sqlite.
+	ftsRowid := ftsRowID(id)
+	_, _ = tx.Exec(`DELETE FROM {{.Name}}_fts WHERE rowid = ?`, ftsRowid)
 	_, _ = tx.Exec(
-		`INSERT INTO {{.Name}}_fts (id, {{safeJoin .FTS5Fields ", "}}) VALUES (?{{- range .FTS5Fields}}, ?{{- end}})`,
+		`INSERT INTO {{.Name}}_fts (rowid, id, {{safeJoin .FTS5Fields ", "}}) VALUES (?{{- range .FTS5Fields}}, ?{{- end}}, ?)`,
+		ftsRowid,
 		id,
 {{- range .FTS5Fields}}
 		lookupFieldValue(obj, "{{.}}"),
@@ -357,13 +371,15 @@ func (s *Store) UpsertBatch(resourceType string, items []json.RawMessage) error 
 			return fmt.Errorf("upserting %s/%s: %w", resourceType, id, err)
 		}
 
-		// Update FTS index (non-fatal — matches upsertGenericResourceTx pattern)
-		if _, ftsErr := tx.Exec(`DELETE FROM resources_fts WHERE id = ?`, id); ftsErr != nil {
+		// Update FTS index (non-fatal — matches upsertGenericResourceTx pattern).
+		// Use explicit rowid for FTS5 compatibility with modernc.org/sqlite.
+		ftsRowid := ftsRowID(id)
+		if _, ftsErr := tx.Exec(`DELETE FROM resources_fts WHERE rowid = ?`, ftsRowid); ftsErr != nil {
 			fmt.Fprintf(os.Stderr, "warning: FTS index cleanup failed for %s/%s: %v\n", resourceType, id, ftsErr)
 		}
 		if _, ftsErr := tx.Exec(
-			`INSERT INTO resources_fts (id, resource_type, content) VALUES (?, ?, ?)`,
-			id, resourceType, string(item),
+			`INSERT INTO resources_fts (rowid, id, resource_type, content) VALUES (?, ?, ?, ?)`,
+			ftsRowid, id, resourceType, string(item),
 		); ftsErr != nil {
 			fmt.Fprintf(os.Stderr, "warning: FTS index update failed for %s/%s: %v\n", resourceType, id, ftsErr)
 		}

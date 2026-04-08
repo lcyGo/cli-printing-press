@@ -164,6 +164,61 @@ func TestParseSDLContent(t *testing.T) {
 	assert.NotContains(t, parsed.Types, "IssuePayload")
 }
 
+func TestBuildTypeDefDeduplicatesFields(t *testing.T) {
+	// Schema where a type has duplicate field names (e.g., pagination args
+	// mixed in with entity fields, as happens in large GraphQL schemas like Linear's).
+	sdl := `
+type Query {
+  things(first: Int, after: String): ThingConnection!
+}
+
+type ThingConnection {
+  nodes: [Thing!]!
+  pageInfo: PageInfo!
+}
+
+type PageInfo {
+  hasNextPage: Boolean!
+  endCursor: String
+}
+
+type Thing {
+  id: ID!
+  name: String!
+  after: String
+  before: String
+  first: Int
+  after: String
+  before: String
+}
+`
+	parsed, err := ParseSDLBytes("test-dedup.graphql", []byte(sdl))
+	require.NoError(t, err)
+
+	thingType, ok := parsed.Types["Thing"]
+	require.True(t, ok, "Thing type should be present")
+
+	// Verify no duplicate field names
+	seen := map[string]int{}
+	for _, field := range thingType.Fields {
+		seen[field.Name]++
+	}
+	for name, count := range seen {
+		assert.Equal(t, 1, count, "field %q appears %d times, expected 1", name, count)
+	}
+
+	// Verify all unique fields are present
+	fieldNames := make([]string, 0, len(thingType.Fields))
+	for _, f := range thingType.Fields {
+		fieldNames = append(fieldNames, f.Name)
+	}
+	assert.Contains(t, fieldNames, "id")
+	assert.Contains(t, fieldNames, "name")
+	assert.Contains(t, fieldNames, "after")
+	assert.Contains(t, fieldNames, "before")
+	assert.Contains(t, fieldNames, "first")
+}
+
 func paramNames(params []spec.Param) []string {
 	names := make([]string, 0, len(params))
 	for _, param := range params {

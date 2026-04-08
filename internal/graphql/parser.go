@@ -573,7 +573,12 @@ func shouldExposeType(name, kind string) bool {
 
 func buildTypeDef(typ gqlType, enumMap map[string][]string) spec.TypeDef {
 	fields := make([]spec.TypeField, 0, len(typ.Fields))
+	seen := make(map[string]bool, len(typ.Fields))
 	for _, field := range typ.Fields {
+		if seen[field.Name] {
+			continue
+		}
+		seen[field.Name] = true
 		fieldType, _, _ := mapGraphQLType(field.Type)
 		if enumValues := enumMap[unwrapType(field.Type)]; len(enumValues) > 0 && fieldType == "string" {
 			fieldType = "string"
