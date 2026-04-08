@@ -89,6 +89,28 @@ When the user provides an API key (Phase 0 API Key Gate or inline):
 - When writing live smoke results to proofs, write the test outcomes (PASS/FAIL)
   but never the request URLs that contain the key in query params
 
+## Workspace & organization PII redaction
+
+Live dogfood testing (Phase 5) naturally surfaces workspace-specific data: organization
+names, team names, team member names, and email addresses. This data must NEVER appear
+in any public artifact: acceptance reports, shipcheck proofs, manuscripts archived to
+the library repo, PR descriptions, or READMEs.
+
+**When reporting live test results, use generic descriptions:**
+- "the workspace" not the actual org name
+- "5 overloaded members" not their names or emails
+- "12 users synced" not "synced matt@company.com, patrick@company.com"
+- "team ESP" is OK (team keys are structural, not PII) but "Esper Labs" is not
+
+**Before archiving manuscripts (Phase 5.6):** Scan acceptance reports and shipcheck
+proofs for organization names, email addresses, and full names. The exact-value scan
+for API keys (above) catches secrets; this step catches PII that the user's live
+workspace naturally produces.
+
+**Before creating publish PRs:** The publish skill constructs PR descriptions from
+manuscripts and test results. Any live test data quoted in the PR body must be
+scrubbed of workspace PII. The library repo is public.
+
 ## Session state cleanup
 
 Session state files (`session-state.json`) contain browser cookies and auth tokens.

@@ -652,6 +652,13 @@ Build the PR description from:
 - The validation results from Step 4
 - A Gaps section listing any missing manifest fields
 
+**MANDATORY: Before constructing the PR body, scrub all workspace PII.** The library
+repo is public. Scan any live test results, acceptance data, or manuscript excerpts
+for organization names, team member names, and email addresses. Replace with generic
+descriptions ("the workspace", "5 team members", "12 users"). Team keys (e.g., "ESP")
+are OK but org names (e.g., "Acme Corp") are not. See `references/secret-protection.md`
+in the printing-press skill for the full policy.
+
 **PR description template:**
 
 ```markdown
