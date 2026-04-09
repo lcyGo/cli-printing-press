@@ -1645,3 +1645,27 @@ func TestMCPDescription(t *testing.T) {
 		})
 	}
 }
+
+func TestEnvVarBuiltinFieldDedup(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		envVar    string
+		isBuiltin bool
+		resolved  string
+	}{
+		{"HUBSPOT_ACCESS_TOKEN", true, "AccessToken"},
+		{"DISCORD_ACCESS_TOKEN", true, "AccessToken"},
+		{"MY_CLIENT_ID", true, "ClientID"},
+		{"STRIPE_SECRET_KEY", false, "StripeSecretKey"},
+		{"LINEAR_API_KEY", false, "LinearApiKey"},
+		{"MY_REFRESH_TOKEN", true, "RefreshToken"},
+		{"NOTION_TOKEN", false, "NotionToken"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.envVar, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.isBuiltin, envVarIsBuiltinField(tt.envVar))
+			assert.Equal(t, tt.resolved, resolveEnvVarField(tt.envVar))
+		})
+	}
+}

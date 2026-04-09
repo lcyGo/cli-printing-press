@@ -101,19 +101,22 @@ func New(s *spec.APISpec, outputDir string) *Generator {
 			}
 			return zeroVal(t)
 		},
-		"positionalArgs":     positionalArgs,
-		"configTag":          configTag,
-		"camelToJSON":        camelToJSON,
-		"columnNames":        columnNames,
-		"columnPlaceholders": columnPlaceholders,
-		"updateSet":          updateSet,
-		"envVarField":        envVarField,
-		"envVarPlaceholder":  envVarPlaceholder,
-		"add":                func(a, b int) int { return a + b },
-		"oneline":            oneline,
-		"mcpDescription":     mcpDescription,
-		"flagName":           flagName,
-		"safeTypeName":       safeTypeName,
+		"positionalArgs":         positionalArgs,
+		"configTag":              configTag,
+		"camelToJSON":            camelToJSON,
+		"columnNames":            columnNames,
+		"columnPlaceholders":     columnPlaceholders,
+		"updateSet":              updateSet,
+		"envVarField":            envVarField,
+		"envVarPlaceholder":      envVarPlaceholder,
+		"envVarIsBuiltinField":   envVarIsBuiltinField,
+		"envVarBuiltinFieldName": envVarBuiltinFieldName,
+		"resolveEnvVarField":     resolveEnvVarField,
+		"add":                    func(a, b int) int { return a + b },
+		"oneline":                oneline,
+		"mcpDescription":         mcpDescription,
+		"flagName":               flagName,
+		"safeTypeName":           safeTypeName,
 		"hasNonScalarType": func(types map[string]spec.TypeDef) bool {
 			for _, td := range types {
 				for _, f := range td.Fields {
@@ -1046,6 +1049,44 @@ func envVarField(envVar string) string {
 		}
 	}
 	return result
+}
+
+// builtinConfigTags lists the JSON/TOML tags of hardcoded Config struct fields
+// in config.go.tmpl. When an env var's placeholder matches one of these, the
+// env var should populate the existing field instead of creating a duplicate.
+var builtinConfigTags = map[string]string{
+	"access_token":  "AccessToken",
+	"refresh_token": "RefreshToken",
+	"client_id":     "ClientID",
+	"client_secret": "ClientSecret",
+	"base_url":      "BaseURL",
+	"auth_header":   "AuthHeaderVal",
+}
+
+// envVarIsBuiltinField returns true if the env var's placeholder tag would
+// collide with a hardcoded Config struct field tag.
+func envVarIsBuiltinField(envVar string) bool {
+	placeholder := envVarPlaceholder(envVar)
+	_, ok := builtinConfigTags[placeholder]
+	return ok
+}
+
+// envVarBuiltinFieldName returns the Go field name of the hardcoded Config
+// struct field that matches this env var's placeholder, or empty string if none.
+func envVarBuiltinFieldName(envVar string) string {
+	placeholder := envVarPlaceholder(envVar)
+	return builtinConfigTags[placeholder]
+}
+
+// resolveEnvVarField returns the correct Go field name for an env var,
+// accounting for builtin field collisions. If the env var's placeholder
+// matches a hardcoded field, returns that field name; otherwise returns
+// the computed field name from envVarField.
+func resolveEnvVarField(envVar string) string {
+	if name := envVarBuiltinFieldName(envVar); name != "" {
+		return name
+	}
+	return envVarField(envVar)
 }
 
 func oneline(s string) string {

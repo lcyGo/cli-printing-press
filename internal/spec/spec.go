@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -59,6 +60,8 @@ type ConfigSpec struct {
 
 type Resource struct {
 	Description  string              `yaml:"description" json:"description"`
+	Path         string              `yaml:"path,omitempty" json:"path,omitempty"`             // base path for operations shorthand (e.g., /api/items)
+	Operations   []string            `yaml:"operations,omitempty" json:"operations,omitempty"` // shorthand: list, get, create, update, delete, search
 	Endpoints    map[string]Endpoint `yaml:"endpoints" json:"endpoints"`
 	SubResources map[string]Resource `yaml:"sub_resources,omitempty" json:"sub_resources,omitempty"`
 }
@@ -144,10 +147,127 @@ func ParseBytes(data []byte) (*APISpec, error) {
 	if yamlErr != nil {
 		return nil, fmt.Errorf("parsing yaml: %w", yamlErr)
 	}
+	s.expandOperations()
 	if err := s.Validate(); err != nil {
 		return nil, fmt.Errorf("validation: %w", err)
 	}
 	return &s, nil
+}
+
+// expandOperations converts operations shorthand (e.g., [list, get, create])
+// into explicit Endpoint entries for each resource that has Operations set.
+// Explicit endpoints take precedence over generated ones.
+func (s *APISpec) expandOperations() {
+	for name, r := range s.Resources {
+		if len(r.Operations) == 0 || r.Path == "" {
+			continue
+		}
+		if r.Endpoints == nil {
+			r.Endpoints = make(map[string]Endpoint)
+		}
+		idParam := singularize(name) + "Id"
+		for _, op := range r.Operations {
+			// Skip if an explicit endpoint already exists with this name
+			if _, exists := r.Endpoints[op]; exists {
+				continue
+			}
+			switch op {
+			case "list":
+				r.Endpoints["list"] = Endpoint{
+					Method:       "GET",
+					Path:         r.Path,
+					Description:  "List " + name,
+					ResponsePath: "results",
+				}
+			case "get":
+				r.Endpoints["get"] = Endpoint{
+					Method:      "GET",
+					Path:        r.Path + "/{" + idParam + "}",
+					Description: "Get a " + singularize(name) + " by ID",
+					Params: []Param{{
+						Name:        idParam,
+						Type:        "string",
+						Required:    true,
+						Positional:  true,
+						Description: singularize(name) + " ID",
+					}},
+				}
+			case "create":
+				r.Endpoints["create"] = Endpoint{
+					Method:      "POST",
+					Path:        r.Path,
+					Description: "Create a new " + singularize(name),
+				}
+			case "update":
+				r.Endpoints["update"] = Endpoint{
+					Method:      "PATCH",
+					Path:        r.Path + "/{" + idParam + "}",
+					Description: "Update a " + singularize(name),
+					Params: []Param{{
+						Name:        idParam,
+						Type:        "string",
+						Required:    true,
+						Positional:  true,
+						Description: singularize(name) + " ID",
+					}},
+				}
+			case "delete":
+				r.Endpoints["delete"] = Endpoint{
+					Method:      "DELETE",
+					Path:        r.Path + "/{" + idParam + "}",
+					Description: "Delete a " + singularize(name),
+					Params: []Param{{
+						Name:        idParam,
+						Type:        "string",
+						Required:    true,
+						Positional:  true,
+						Description: singularize(name) + " ID",
+					}},
+				}
+			case "search":
+				r.Endpoints["search"] = Endpoint{
+					Method:       "POST",
+					Path:         r.Path + "/search",
+					Description:  "Search " + name,
+					ResponsePath: "results",
+					Body: []Param{{
+						Name:        "query",
+						Type:        "string",
+						Description: "Search query string",
+					}},
+				}
+			}
+		}
+		s.Resources[name] = r
+	}
+}
+
+// singularize returns a simple singular form of a plural noun.
+// Handles common patterns; irregular forms use a lookup table.
+func singularize(s string) string {
+	irregulars := map[string]string{
+		"properties": "property",
+		"companies":  "company",
+		"categories": "category",
+		"entries":    "entry",
+		"statuses":   "status",
+		"addresses":  "address",
+		"analyses":   "analysis",
+	}
+	lower := strings.ToLower(s)
+	if singular, ok := irregulars[lower]; ok {
+		return singular
+	}
+	if strings.HasSuffix(lower, "ies") {
+		return lower[:len(lower)-3] + "y"
+	}
+	if strings.HasSuffix(lower, "ses") || strings.HasSuffix(lower, "xes") || strings.HasSuffix(lower, "zes") {
+		return lower[:len(lower)-2]
+	}
+	if strings.HasSuffix(lower, "s") && !strings.HasSuffix(lower, "ss") {
+		return lower[:len(lower)-1]
+	}
+	return lower
 }
 
 func (s *APISpec) Validate() error {

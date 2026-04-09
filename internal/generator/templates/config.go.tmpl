@@ -26,7 +26,9 @@ type Config struct {
 	ClientSecret   string `{{configTag .Config.Format}}:"client_secret"`
 	Path           string `{{configTag .Config.Format}}:"-"`
 {{- range .Auth.EnvVars}}
+{{- if not (envVarIsBuiltinField .)}}
 	{{envVarField .}} string `{{configTag $.Config.Format}}:"{{envVarPlaceholder .}}"`
+{{- end}}
 {{- end}}
 }
 
@@ -44,7 +46,7 @@ func Load(configPath string) (*Config, error) {
 	}
 	if path == "" {
 		home, _ := os.UserHomeDir()
-		path = filepath.Join(home, ".config", "{{.Name}}-pp-cli", "config.{{.Config.Format}}")
+		path = filepath.Join(home, ".config", "{{.Name}}-pp-cli", "config.{{or .Config.Format "json"}}")
 	}
 	cfg.Path = path
 
@@ -64,7 +66,7 @@ func Load(configPath string) (*Config, error) {
 {{- end}}
 {{- range .Auth.EnvVars}}
 	if v := os.Getenv("{{.}}"); v != "" {
-		cfg.{{envVarField .}} = v
+		cfg.{{resolveEnvVarField .}} = v
 		cfg.AuthSource = "env:{{.}}"
 	}
 {{- end}}
@@ -83,21 +85,21 @@ func (c *Config) AuthHeader() string {
 	}
 {{- if eq .Auth.Type "api_key"}}
 	{{- if gt (len .Auth.EnvVars) 0}}
-	token := c.{{envVarField (index .Auth.EnvVars 0)}}
+	token := c.{{resolveEnvVarField (index .Auth.EnvVars 0)}}
 	if token == "" {
 		return ""
 	}
 	{{- end}}
 {{- range .Auth.EnvVars}}
-	if c.{{envVarField .}} == "" {
+	if c.{{resolveEnvVarField .}} == "" {
 		return ""
 	}
 {{- end}}
 	{{- if .Auth.Format}}
 	replacements := map[string]string{
 	{{- range .Auth.EnvVars}}
-		"{{envVarPlaceholder .}}": c.{{envVarField .}},
-		"{{.}}": c.{{envVarField .}},
+		"{{envVarPlaceholder .}}": c.{{resolveEnvVarField .}},
+		"{{.}}": c.{{resolveEnvVarField .}},
 	{{- end}}
 	}
 	return applyAuthFormat("{{.Auth.Format}}", replacements)
@@ -116,15 +118,15 @@ func (c *Config) AuthHeader() string {
 		{{- end}}
 	}
 	{{- if gt (len .Auth.EnvVars) 0}}
-	if c.{{envVarField (index .Auth.EnvVars 0)}} != "" {
+	if c.{{resolveEnvVarField (index .Auth.EnvVars 0)}} != "" {
 		{{- if .Auth.Format}}
 		return applyAuthFormat("{{.Auth.Format}}", map[string]string{
-			"{{envVarPlaceholder (index .Auth.EnvVars 0)}}": c.{{envVarField (index .Auth.EnvVars 0)}},
-			"{{index .Auth.EnvVars 0}}": c.{{envVarField (index .Auth.EnvVars 0)}},
-			"token": c.{{envVarField (index .Auth.EnvVars 0)}},
+			"{{envVarPlaceholder (index .Auth.EnvVars 0)}}": c.{{resolveEnvVarField (index .Auth.EnvVars 0)}},
+			"{{index .Auth.EnvVars 0}}": c.{{resolveEnvVarField (index .Auth.EnvVars 0)}},
+			"token": c.{{resolveEnvVarField (index .Auth.EnvVars 0)}},
 		})
 		{{- else}}
-		return "Bearer " + c.{{envVarField (index .Auth.EnvVars 0)}}
+		return "Bearer " + c.{{resolveEnvVarField (index .Auth.EnvVars 0)}}
 		{{- end}}
 	}
 	{{- end}}
@@ -135,8 +137,8 @@ func (c *Config) AuthHeader() string {
 		return c.AccessToken
 	}
 	{{- if gt (len .Auth.EnvVars) 0}}
-	if c.{{envVarField (index .Auth.EnvVars 0)}} != "" {
-		return c.{{envVarField (index .Auth.EnvVars 0)}}
+	if c.{{resolveEnvVarField (index .Auth.EnvVars 0)}} != "" {
+		return c.{{resolveEnvVarField (index .Auth.EnvVars 0)}}
 	}
 	{{- end}}
 	return ""
@@ -146,8 +148,8 @@ func (c *Config) AuthHeader() string {
 		return c.AccessToken
 	}
 	{{- if gt (len .Auth.EnvVars) 0}}
-	if c.{{envVarField (index .Auth.EnvVars 0)}} != "" {
-		return c.{{envVarField (index .Auth.EnvVars 0)}}
+	if c.{{resolveEnvVarField (index .Auth.EnvVars 0)}} != "" {
+		return c.{{resolveEnvVarField (index .Auth.EnvVars 0)}}
 	}
 	{{- end}}
 	return ""

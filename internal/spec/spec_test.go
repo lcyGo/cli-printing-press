@@ -458,3 +458,123 @@ description: Missing base_url and resources
 		assert.Contains(t, err.Error(), "base_url is required")
 	})
 }
+
+func TestOperationsShorthand(t *testing.T) {
+	s, err := Parse("../../testdata/operations-shorthand.yaml")
+	require.NoError(t, err)
+
+	assert.Equal(t, "testapi", s.Name)
+	assert.Len(t, s.Resources, 3)
+
+	t.Run("full CRUD operations expand to 5 endpoints", func(t *testing.T) {
+		items := s.Resources["items"]
+		assert.Len(t, items.Endpoints, 5)
+
+		// list
+		list := items.Endpoints["list"]
+		assert.Equal(t, "GET", list.Method)
+		assert.Equal(t, "/api/items", list.Path)
+
+		// get
+		get := items.Endpoints["get"]
+		assert.Equal(t, "GET", get.Method)
+		assert.Equal(t, "/api/items/{itemId}", get.Path)
+		require.Len(t, get.Params, 1)
+		assert.Equal(t, "itemId", get.Params[0].Name)
+		assert.True(t, get.Params[0].Required)
+		assert.True(t, get.Params[0].Positional)
+
+		// create
+		create := items.Endpoints["create"]
+		assert.Equal(t, "POST", create.Method)
+		assert.Equal(t, "/api/items", create.Path)
+
+		// update
+		update := items.Endpoints["update"]
+		assert.Equal(t, "PATCH", update.Method)
+		assert.Equal(t, "/api/items/{itemId}", update.Path)
+
+		// delete
+		del := items.Endpoints["delete"]
+		assert.Equal(t, "DELETE", del.Method)
+		assert.Equal(t, "/api/items/{itemId}", del.Path)
+	})
+
+	t.Run("partial operations expand correctly", func(t *testing.T) {
+		cats := s.Resources["categories"]
+		assert.Len(t, cats.Endpoints, 3)
+
+		assert.Equal(t, "GET", cats.Endpoints["list"].Method)
+		assert.Equal(t, "GET", cats.Endpoints["get"].Method)
+		assert.Equal(t, "/api/categories/{categoryId}", cats.Endpoints["get"].Path)
+		assert.Equal(t, "POST", cats.Endpoints["search"].Method)
+		assert.Equal(t, "/api/categories/search", cats.Endpoints["search"].Path)
+	})
+
+	t.Run("explicit endpoints override operations", func(t *testing.T) {
+		mixed := s.Resources["mixed"]
+		// operations: [list, get] + explicit: [list, special] = 3 total
+		assert.Len(t, mixed.Endpoints, 3)
+
+		// Explicit list overrides operations-generated list
+		list := mixed.Endpoints["list"]
+		assert.Equal(t, "/api/mixed/custom-list", list.Path)
+		assert.Equal(t, "Custom list endpoint overrides operations-generated one", list.Description)
+
+		// Operations-generated get
+		get := mixed.Endpoints["get"]
+		assert.Equal(t, "/api/mixed/{mixedId}", get.Path)
+
+		// Explicit-only special
+		special := mixed.Endpoints["special"]
+		assert.Equal(t, "POST", special.Method)
+		assert.Equal(t, "/api/mixed/special", special.Path)
+	})
+}
+
+func TestSingularize(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"items", "item"},
+		{"contacts", "contact"},
+		{"companies", "company"},
+		{"categories", "category"},
+		{"properties", "property"},
+		{"addresses", "address"},
+		{"statuses", "status"},
+		{"deals", "deal"},
+		{"data", "data"},
+		{"entries", "entry"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			assert.Equal(t, tt.want, singularize(tt.input))
+		})
+	}
+}
+
+func TestExpandOperationsNoPath(t *testing.T) {
+	// Operations without a path should not expand
+	input := `name: nopath
+description: "Test"
+base_url: "https://api.example.com"
+resources:
+  items:
+    description: "No path"
+    operations:
+      - list
+    endpoints:
+      fallback:
+        method: GET
+        path: /items
+        description: "Explicit fallback"
+`
+	s, err := ParseBytes([]byte(input))
+	require.NoError(t, err)
+	items := s.Resources["items"]
+	// Only the explicit endpoint should exist, operations not expanded
+	assert.Len(t, items.Endpoints, 1)
+	assert.Contains(t, items.Endpoints, "fallback")
+}
