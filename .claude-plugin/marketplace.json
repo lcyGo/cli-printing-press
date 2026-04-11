@@ -26,7 +26,7 @@
     },
     {
       "name": "printing-press-library",
-      "version": "1.0.0",
+      "version": "1.1.2",
       "description": "Discover, install, and use Printing Press CLI tools and MCP servers for hundreds of APIs",
       "author": {
         "name": "mvanhorn"
@@ -39,8 +39,10 @@
         "printing-press"
       ],
       "source": {
-        "source": "github",
-        "repo": "mvanhorn/printing-press-library"
+        "source": "git-subdir",
+        "url": "https://github.com/mvanhorn/printing-press-library.git",
+        "path": "plugin",
+        "ref": "main"
       }
     }
   ]
