@@ -41,17 +41,33 @@ func Execute() error {
 
 	rootCmd := &cobra.Command{
 		Use:   "{{.Name}}-pp-cli",
+{{- /* Root --help Long surfaces all verified-built novel features, not
+       just the top few. The whole point of this change is to save agents
+       from doing discovery to find novel capabilities — capping the count
+       neuters that for CLIs with many novel features, which are exactly
+       the CLIs that benefit most from the work.
+
+       Size is bounded two ways:
+         • per-line: headline truncated to 120 runes, each description to 80
+         • total: overflow beyond 15 features becomes a "…and N more" line
+           (NovelOverflowCount set in Go); stops runaway absorb outputs
+           from producing a wall of text in --help
+       Full novel-feature details with examples live in README/SKILL; Long
+       names the capabilities so an agent can pick the right subcommand. */}}
 {{- if and .Narrative .Narrative.Headline}}
-		Short: {{backtick}}{{humanName .Name}} CLI — {{goRawSafe .Narrative.Headline}}{{backtick}},
+		Short: {{backtick}}{{humanName .Name}} CLI — {{goRawSafe (truncate 120 .Narrative.Headline)}}{{backtick}},
 {{- else}}
 		Short: "Manage {{.Name}} resources via the {{.Name}} API",
 {{- end}}
 {{- if .TopNovelFeatures}}
-		Long: {{backtick}}{{humanName .Name}} CLI{{if and .Narrative .Narrative.Headline}} — {{goRawSafe .Narrative.Headline}}{{end}}
+		Long: {{backtick}}{{humanName .Name}} CLI{{if and .Narrative .Narrative.Headline}} — {{goRawSafe (truncate 120 .Narrative.Headline)}}{{end}}
 
 Highlights (not in the official API docs):
 {{- range .TopNovelFeatures}}
-  • {{goRawSafe .Command}}   {{goRawSafe .Description}}
+  • {{goRawSafe .Command}}   {{goRawSafe (truncate 80 .Description)}}
+{{- end}}
+{{- if .NovelOverflowCount}}
+  …and {{.NovelOverflowCount}} more — see README.md for the full list
 {{- end}}
 
 Agent mode: add --agent to any command for JSON output + non-interactive mode.

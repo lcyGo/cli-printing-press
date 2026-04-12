@@ -12,11 +12,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// TestRootLongIncludesTopNovelFeatures asserts the generated root.go sets
-// a Long description naming the top novel features plus --agent and doctor
-// pointers, so agents running `<cli> --help` can pick the right command
-// without a second discovery round.
-func TestRootLongIncludesTopNovelFeatures(t *testing.T) {
+// TestRootLongIncludesAllNovelFeatures asserts the generated root.go Long
+// description names every verified-built novel feature (not just a
+// hardcoded top-N), plus --agent and doctor pointers. The goal is that
+// an agent running `<cli> --help` can pick the right novel command
+// without a second discovery round — which requires seeing all the
+// novel commands, not a curated subset.
+func TestRootLongIncludesAllNovelFeatures(t *testing.T) {
 	t.Parallel()
 
 	apiSpec := minimalSpec("helped")
@@ -29,7 +31,8 @@ func TestRootLongIncludesTopNovelFeatures(t *testing.T) {
 		{Command: "portfolio perf", Description: "Compute unrealized P&L across synced lots"},
 		{Command: "digest --watchlist tech", Description: "Biggest movers across a watchlist"},
 		{Command: "auth login-chrome", Description: "Import a Chrome session when rate-limited"},
-		{Command: "compare", Description: "Side-by-side quote comparison"}, // should be truncated
+		{Command: "compare", Description: "Side-by-side quote comparison"},
+		{Command: "sparkline", Description: "Unicode chart for recent price action"},
 	}
 	require.NoError(t, gen.Generate())
 
@@ -39,20 +42,56 @@ func TestRootLongIncludesTopNovelFeatures(t *testing.T) {
 
 	assert.True(t, strings.Contains(content, "Highlights (not in the official API docs):"),
 		"root Long should introduce the highlights section")
-	assert.True(t, strings.Contains(content, "portfolio perf"),
-		"root Long should include the first novel feature")
-	assert.True(t, strings.Contains(content, "digest --watchlist tech"),
-		"root Long should include the second novel feature")
-	assert.True(t, strings.Contains(content, "auth login-chrome"),
-		"root Long should include the third novel feature")
-	assert.False(t, strings.Contains(content, "Side-by-side quote comparison"),
-		"root Long should cap at top 3 novel features; the fourth should not appear")
+	// All five novel commands must appear — this is the whole point of
+	// surfacing the novel features in Long rather than forcing discovery.
+	for _, cmd := range []string{"portfolio perf", "digest --watchlist tech", "auth login-chrome", "compare", "sparkline"} {
+		assert.True(t, strings.Contains(content, cmd),
+			"root Long should include novel feature %q without a top-N cap", cmd)
+	}
+	// No overflow breadcrumb should appear when the full list fits under cap.
+	assert.False(t, strings.Contains(content, "and 0 more"),
+		"overflow breadcrumb should not render for a 5-feature CLI (cap is 15)")
 	assert.True(t, strings.Contains(content, "add --agent to any command"),
 		"root Long should point at --agent mode for agent consumers")
 	assert.True(t, strings.Contains(content, "helped-pp-cli doctor"),
 		"root Long should point at doctor for auth/connectivity checks")
 	assert.True(t, strings.Contains(content, "Every feature plus a local store"),
 		"root Short and Long should incorporate the narrative headline")
+}
+
+// TestRootLongOverflowsGracefullyAt16PlusFeatures asserts that a CLI with
+// more novel features than the per-Long cap (15) renders the first 15 and
+// trails with a "…and N more — see README" breadcrumb, preserving the
+// size budget without silently dropping features.
+func TestRootLongOverflowsGracefullyAt16PlusFeatures(t *testing.T) {
+	t.Parallel()
+
+	apiSpec := minimalSpec("overflow")
+	outputDir := filepath.Join(t.TempDir(), "overflow-pp-cli")
+	gen := New(apiSpec, outputDir)
+	for i := 0; i < 20; i++ {
+		gen.NovelFeatures = append(gen.NovelFeatures, NovelFeature{
+			Command:     "cmd-" + string(rune('a'+i)),
+			Description: "novel feature number " + string(rune('a'+i)),
+		})
+	}
+	require.NoError(t, gen.Generate())
+
+	rootGo, err := os.ReadFile(filepath.Join(outputDir, "internal", "cli", "root.go"))
+	require.NoError(t, err)
+	content := string(rootGo)
+
+	// First 15 features render in full.
+	for i := 0; i < 15; i++ {
+		assert.True(t, strings.Contains(content, "cmd-"+string(rune('a'+i))),
+			"feature cmd-%s (rank %d) should render within the 15-item cap", string(rune('a'+i)), i)
+	}
+	// Remaining 5 are represented by the breadcrumb, not hidden silently.
+	assert.True(t, strings.Contains(content, "…and 5 more — see README.md for the full list"),
+		"overflow tail should render as a breadcrumb naming the hidden count; content:\n%s", content)
+	// Breadcrumb count should be accurate — 20 features - 15 shown = 5 hidden.
+	assert.False(t, strings.Contains(content, "…and 6 more"),
+		"breadcrumb count should be exact (20 - 15 = 5, not 6)")
 }
 
 // TestRootLongHandlesBackticksInNarrativeText asserts that backticks in
@@ -133,6 +172,78 @@ func runGoVet(t *testing.T, dir string) error {
 		t.Logf("go vet output: %s", string(out))
 	}
 	return err
+}
+
+// TestRootLongStaysUnderSizeBudget asserts that an absorb output with
+// ten novel features and a verbose headline does not produce a bloated
+// --help Long. Agents running --help on a wall-of-text CLI is the same
+// token-waste problem this change set is trying to solve — don't fix
+// one discovery-loop problem by creating a different one.
+//
+// Budget (enforced by truncate helper in the template):
+//   - Headline clipped to 120 runes
+//   - Top 3 novel features (cap in Go; remaining 7 dropped)
+//   - Each feature description clipped to 80 runes
+//
+// Upper bound: Long should never exceed ~1500 chars in practice even
+// when every field is maxed out. We assert a slightly looser cap (2000)
+// so trivial copy tweaks don't break the test.
+func TestRootLongStaysUnderSizeBudget(t *testing.T) {
+	t.Parallel()
+
+	longStr := strings.Repeat("x", 500) // intentionally over every cap
+	apiSpec := minimalSpec("bounded")
+	outputDir := filepath.Join(t.TempDir(), "bounded-pp-cli")
+	gen := New(apiSpec, outputDir)
+	gen.Narrative = &ReadmeNarrative{
+		Headline: "A very verbose headline that exceeds the 120-rune budget: " + longStr,
+	}
+	// Ten features, each with a runaway description.
+	for i := 0; i < 10; i++ {
+		gen.NovelFeatures = append(gen.NovelFeatures, NovelFeature{
+			Command:     "cmd" + strings.Repeat("x", i),
+			Description: "runaway description " + longStr,
+		})
+	}
+	require.NoError(t, gen.Generate())
+
+	rootGo, err := os.ReadFile(filepath.Join(outputDir, "internal", "cli", "root.go"))
+	require.NoError(t, err)
+	content := string(rootGo)
+
+	// Extract the Long raw-string body so we're measuring the actual --help
+	// payload, not the whole generated file.
+	longStart := strings.Index(content, "Long: `")
+	require.NotEqual(t, -1, longStart, "Long field should be rendered")
+	longStart += len("Long: `")
+	longEnd := strings.Index(content[longStart:], "`,")
+	require.NotEqual(t, -1, longEnd, "Long raw string should close")
+	longBody := content[longStart : longStart+longEnd]
+
+	assert.LessOrEqual(t, len(longBody), 2000,
+		"root --help Long should stay under 2000 chars; got %d chars. Body:\n%s",
+		len(longBody), longBody)
+
+	// All 10 features render (under the 15-item cap) — we dropped the
+	// top-N cap so novel capabilities aren't hidden from CLI-only agents.
+	for i := 0; i < 10; i++ {
+		assert.True(t, strings.Contains(longBody, "cmd"+strings.Repeat("x", i)),
+			"feature cmd%s should appear in Long (10 features is under the 15-cap)", strings.Repeat("x", i))
+	}
+	// No overflow breadcrumb at 10 features.
+	assert.False(t, strings.Contains(longBody, "…and"),
+		"overflow breadcrumb should not render at 10 features (cap is 15)")
+
+	// No single feature description should contain the full 500-x runaway —
+	// the truncate helper must clip it with an ellipsis.
+	assert.False(t, strings.Contains(longBody, strings.Repeat("x", 200)),
+		"truncate helper should clip long descriptions; found a 200-x run in Long body")
+	assert.True(t, strings.Contains(longBody, "…"),
+		"truncated content should carry the ellipsis marker")
+
+	// Generated Go must still compile — truncation must not produce invalid syntax.
+	require.NoError(t, runGoVet(t, outputDir),
+		"bounded Long should still produce parseable Go")
 }
 
 // TestEndToEndGenerateWithFullNarrativeBuildsAndParses is the belt-and-suspenders

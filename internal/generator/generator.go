@@ -287,6 +287,25 @@ func New(s *spec.APISpec, outputDir string) *Generator {
 		"goRawSafe": func(s string) string {
 			return strings.ReplaceAll(s, "`", "'")
 		},
+		// truncate clips a string to max runes with an ellipsis. Used to
+		// enforce the root --help Long size budget: LLM-authored headlines
+		// and novel-feature descriptions have no inherent length ceiling,
+		// and agents running <cli> --help shouldn't be punished for one
+		// verbose absorb output. Counts runes (not bytes) so multi-byte
+		// characters don't produce mid-codepoint truncation.
+		"truncate": func(max int, s string) string {
+			if max <= 0 {
+				return s
+			}
+			runes := []rune(s)
+			if len(runes) <= max {
+				return s
+			}
+			if max <= 1 {
+				return string(runes[:max])
+			}
+			return string(runes[:max-1]) + "…"
+		},
 		// yamlDoubleQuoted escapes a string for safe embedding inside a YAML
 		// double-quoted scalar. Handles the three failure modes we've seen
 		// from LLM-authored narrative fields: unescaped " (breaks parser),
@@ -1064,17 +1083,23 @@ func (g *Generator) Generate() error {
 		}
 	}
 
-	// Top 3 novel features drive the root --help Long description. The cap
-	// keeps help output compact; full list lives in README/SKILL. Sliced off
-	// NovelFeatures which is already the verified-built subset when dogfood
-	// has run.
-	var topNovel []NovelFeature
-	if n := len(g.NovelFeatures); n > 0 {
-		limit := n
-		if limit > 3 {
-			limit = 3
-		}
-		topNovel = g.NovelFeatures[:limit]
+	// Root --help Long surfaces ALL verified-built novel features — the
+	// whole point of this change is to stop making agents do discovery
+	// for novel capabilities. A count cap (earlier draft used 3) neuters
+	// the thesis for CLIs with genuinely many novel features, which are
+	// the CLIs that benefit most from the absorb work in the first place.
+	//
+	// Size is bounded two ways:
+	//   1. per-line truncation via the template's truncate helper (80 runes)
+	//   2. a soft cap on total feature lines rendered (MaxHighlightLines);
+	//      overflow becomes a "…and N more — see README" breadcrumb so a
+	//      verbose absorb output doesn't blow up --help
+	const maxHighlightLines = 15 // ~300-char overhead ceiling in the worst case
+	shownNovel := g.NovelFeatures
+	overflow := 0
+	if len(shownNovel) > maxHighlightLines {
+		overflow = len(shownNovel) - maxHighlightLines
+		shownNovel = shownNovel[:maxHighlightLines]
 	}
 	rootData := struct {
 		*spec.APISpec
@@ -1086,6 +1111,7 @@ func (g *Generator) Generate() error {
 		PromotedResourceNames map[string]bool
 		Narrative             *ReadmeNarrative
 		TopNovelFeatures      []NovelFeature
+		NovelOverflowCount    int
 	}{
 		APISpec:               g.Spec,
 		VisionSet:             g.VisionSet,
@@ -1095,7 +1121,8 @@ func (g *Generator) Generate() error {
 		PromotedCommands:      promotedCommands,
 		PromotedResourceNames: promotedResourceNames,
 		Narrative:             g.Narrative,
-		TopNovelFeatures:      topNovel,
+		TopNovelFeatures:      shownNovel,
+		NovelOverflowCount:    overflow,
 	}
 	if err := g.renderTemplate("root.go.tmpl", filepath.Join("internal", "cli", "root.go"), rootData); err != nil {
 		return fmt.Errorf("rendering root: %w", err)
