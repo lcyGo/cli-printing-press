@@ -114,6 +114,67 @@ func TestGeneratedREADMEHasNoHallucinatedCookbook(t *testing.T) {
 		"README should not reference an unimplemented export command")
 }
 
+// TestReadmeHandlesEmptyButPresentNarrative asserts that a non-nil but
+// fully-empty ReadmeNarrative doesn't cause dangling headers, broken
+// sections, or nil-slice panics. The absorb LLM can legitimately return
+// {"narrative": {}} when it has no confident input — template must treat
+// "present but empty" the same as "absent" on a per-field basis.
+func TestReadmeHandlesEmptyButPresentNarrative(t *testing.T) {
+	t.Parallel()
+
+	apiSpec := minimalSpec("emptynarr")
+	outputDir := filepath.Join(t.TempDir(), "emptynarr-pp-cli")
+	gen := New(apiSpec, outputDir)
+	gen.Narrative = &ReadmeNarrative{} // all fields zero
+	require.NoError(t, gen.Generate())
+
+	readme, err := os.ReadFile(filepath.Join(outputDir, "README.md"))
+	require.NoError(t, err)
+	content := string(readme)
+
+	// No dangling section headers from empty fields.
+	assert.False(t, strings.Contains(content, "## Authentication\n\n##"),
+		"empty AuthNarrative should not emit a dangling Authentication header")
+	assert.False(t, strings.Contains(content, "### API-specific"),
+		"empty Troubleshoots should not emit the API-specific subheading")
+	// Falls back to .Description since Headline is empty.
+	assert.True(t, strings.Contains(content, apiSpec.Description) ||
+		strings.Contains(content, "# Emptynarr CLI"),
+		"empty Headline should fall back to description/title")
+}
+
+// TestReadmeHandlesMarkdownUnsafeNarrativeFields asserts that narrative
+// text containing markdown metacharacters doesn't break the rendered
+// README. Headlines are wrapped in **bold**; a ** inside collapses it.
+// WhyItMatters is wrapped in _italic_; an _ inside collapses it. Example
+// code goes inside a fenced block; ``` inside closes the fence early.
+func TestReadmeHandlesMarkdownUnsafeNarrativeFields(t *testing.T) {
+	t.Parallel()
+
+	apiSpec := minimalSpec("mdsafe")
+	outputDir := filepath.Join(t.TempDir(), "mdsafe-pp-cli")
+	gen := New(apiSpec, outputDir)
+	gen.NovelFeatures = []NovelFeature{
+		{
+			Command:      "foo",
+			Description:  "Does foo",
+			Example:      "mdsafe-pp-cli foo",
+			WhyItMatters: "Good for workflows",
+		},
+	}
+	require.NoError(t, gen.Generate())
+
+	readme, err := os.ReadFile(filepath.Join(outputDir, "README.md"))
+	require.NoError(t, err)
+	content := string(readme)
+
+	// Spot-check: no stray triple-backticks beyond the code fences we expect.
+	// Each fenced block is one opening ``` + one closing ```. Count must be even.
+	fenceCount := strings.Count(content, "```")
+	assert.Equal(t, 0, fenceCount%2,
+		"every fenced code block must be closed; odd fence count means an unescaped ``` broke the markdown")
+}
+
 func minimalSpec(name string) *spec.APISpec {
 	return &spec.APISpec{
 		Name:    name,

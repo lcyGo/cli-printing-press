@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 // TestRootLongIncludesTopNovelFeatures asserts the generated root.go sets
@@ -102,6 +103,14 @@ func TestRootLongHandlesBackticksInNarrativeText(t *testing.T) {
 		"generated root.go with sanitized narrative should compile")
 }
 
+// yamlUnmarshalForTest is a tiny shim so root_long_test doesn't need to
+// import yaml.v3 directly — delegates to skill_test's yaml import via
+// the same package. Kept as a separate helper to make the intent clear
+// at the call site.
+func yamlUnmarshalForTest(body string, out any) error {
+	return yaml.Unmarshal([]byte(body), out)
+}
+
 func runGoVet(t *testing.T, dir string) error {
 	t.Helper()
 	cacheDir, err := goBuildCacheDir(dir)
@@ -124,6 +133,79 @@ func runGoVet(t *testing.T, dir string) error {
 		t.Logf("go vet output: %s", string(out))
 	}
 	return err
+}
+
+// TestEndToEndGenerateWithFullNarrativeBuildsAndParses is the belt-and-suspenders
+// integration test: populate a spec with a full Narrative + grouped novel
+// features including adversarial characters (backticks, quotes, backslashes,
+// apostrophes), generate the CLI, then (1) go build the output and (2)
+// parse SKILL.md as YAML. Catches regressions in either the Go-source
+// escaping path or the YAML-frontmatter escaping path in one shot.
+//
+// Every other test in this package covers one shape at a time. This one
+// exercises the full combination the absorb skill is likely to produce
+// so regressions in escape-helper wiring surface here even if narrower
+// tests forget to add new adversarial inputs.
+func TestEndToEndGenerateWithFullNarrativeBuildsAndParses(t *testing.T) {
+	t.Parallel()
+
+	apiSpec := minimalSpec("e2e")
+	apiSpec.Description = "Multi-line\nspec description with \"quotes\" and \\backslashes."
+	outputDir := filepath.Join(t.TempDir(), "e2e-pp-cli")
+	gen := New(apiSpec, outputDir)
+	gen.Narrative = &ReadmeNarrative{
+		Headline:  "The `--agent`-native CLI with \"smart\" features",
+		ValueProp: "Does things only this CLI does. Uses `sync` for local state.",
+		WhenToUse: "When you need `--agent` output and can't use `curl`.",
+		QuickStart: []QuickStartStep{
+			{Command: "e2e-pp-cli items list --agent", Comment: "Get everything as JSON"},
+		},
+		Troubleshoots: []TroubleshootTip{
+			{Symptom: "HTTP 429", Fix: "Wait and retry, or use `--rate-limit`"},
+		},
+		Recipes: []Recipe{
+			{Title: "Daily sync", Command: "e2e-pp-cli items list --json", Explanation: "Useful for `cron` jobs"},
+		},
+		TriggerPhrases: []string{"what's the price", `use "e2e"`, "quote something"},
+	}
+	gen.NovelFeatures = []NovelFeature{
+		{
+			Command:      "items list",
+			Description:  "List with `--select` filtering",
+			Example:      "e2e-pp-cli items list --agent",
+			WhyItMatters: "Agents skip `--help` discovery",
+			Group:        "Agent-native",
+		},
+	}
+	require.NoError(t, gen.Generate())
+
+	// (1) Generated Go must compile. go vet is lighter than build and catches
+	// the syntax errors that unescaped backticks in Short/Long produce.
+	require.NoError(t, runGoVet(t, outputDir),
+		"generated root.go with full adversarial narrative must be parseable Go")
+
+	// (2) Generated SKILL.md frontmatter must be valid YAML.
+	skill, err := os.ReadFile(filepath.Join(outputDir, "SKILL.md"))
+	require.NoError(t, err)
+	content := string(skill)
+	require.True(t, strings.HasPrefix(content, "---\n"))
+	end := strings.Index(content[4:], "\n---\n")
+	require.NotEqual(t, -1, end)
+	body := strings.TrimSuffix(strings.TrimPrefix(content[:4+end+5], "---\n"), "---\n")
+	var parsed map[string]any
+	require.NoError(t, yamlUnmarshalForTest(body, &parsed),
+		"generated SKILL.md frontmatter with full adversarial narrative must be valid YAML")
+	require.Contains(t, parsed, "description")
+	require.Contains(t, parsed, "name")
+
+	// (3) Every fenced code block in README must be balanced. Unescaped
+	// backticks in narrative content that rendered into fences would
+	// produce an odd count.
+	readme, err := os.ReadFile(filepath.Join(outputDir, "README.md"))
+	require.NoError(t, err)
+	fences := strings.Count(string(readme), "```")
+	assert.Equal(t, 0, fences%2,
+		"README fenced code blocks must be balanced; odd count means narrative text broke a fence")
 }
 
 // TestRootLongFallsBackWhenNoNarrative asserts a sensible generic Long is
