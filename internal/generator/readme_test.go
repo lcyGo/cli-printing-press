@@ -290,6 +290,51 @@ func TestReadmeRendersNovelFeaturesGrouped(t *testing.T) {
 		"Example should render as a code block")
 }
 
+// TestReadmeGroupsByCanonicalizedNameNotLiteralMatch asserts that novel
+// features whose Group strings differ only by casing or whitespace are
+// merged into a single rendered group. The LLM will drift — given five
+// features in "Local state that compounds" it will usually emit at
+// least one "Local State That Compounds" by accident. Without
+// canonicalization these split into separate groups silently and a
+// reader sees the grouping as broken.
+func TestReadmeGroupsByCanonicalizedNameNotLiteralMatch(t *testing.T) {
+	t.Parallel()
+
+	apiSpec := minimalSpec("canon")
+	outputDir := filepath.Join(t.TempDir(), "canon-pp-cli")
+	gen := New(apiSpec, outputDir)
+	gen.NovelFeatures = []NovelFeature{
+		{Command: "a", Description: "alpha", Group: "Local state that compounds"},
+		{Command: "b", Description: "bravo", Group: "local state that compounds"},    // lowercased
+		{Command: "c", Description: "charlie", Group: "Local State That Compounds"},  // title case
+		{Command: "d", Description: "delta", Group: "Local  state  that  compounds"}, // double spaces
+	}
+	require.NoError(t, gen.Generate())
+
+	readme, err := os.ReadFile(filepath.Join(outputDir, "README.md"))
+	require.NoError(t, err)
+	content := string(readme)
+
+	// Exactly one group heading should appear despite four casing variants.
+	count := strings.Count(content, "### Local state that compounds") +
+		strings.Count(content, "### local state that compounds") +
+		strings.Count(content, "### Local State That Compounds") +
+		strings.Count(content, "### Local  state  that  compounds")
+	assert.Equal(t, 1, count,
+		"canonicalized group names should merge into exactly one subheading; got %d variant headings", count)
+
+	// All four features should appear under that single heading.
+	for _, cmd := range []string{"`a`", "`b`", "`c`", "`d`"} {
+		assert.True(t, strings.Contains(content, cmd),
+			"feature %s should appear under the merged group", cmd)
+	}
+
+	// The first-seen display form should win (matches the LLM's casing,
+	// which is usually the most legible one for that group).
+	assert.True(t, strings.Contains(content, "### Local state that compounds"),
+		"first-seen casing should be used as display name; full output:\n%s", content)
+}
+
 // TestReadmeRendersNovelFeaturesFlat asserts that when no feature has a
 // Group, the Unique Features block renders as a flat bullet list without
 // any group subheadings.

@@ -52,8 +52,8 @@ func TestSkillRendersFrontmatterAndCapabilities(t *testing.T) {
 		"frontmatter name should be pp-<api>")
 	assert.True(t, strings.Contains(content, "Quotes, charts, and a local portfolio nothing else has"),
 		"frontmatter description should incorporate headline")
-	assert.True(t, strings.Contains(content, "'quote AAPL'"),
-		"frontmatter description should list domain-specific trigger phrases verbatim")
+	assert.True(t, strings.Contains(content, "`quote AAPL`"),
+		"frontmatter description should list domain-specific trigger phrases verbatim (backtick-delimited)")
 	assert.True(t, strings.Contains(content, "library/commerce/finance-pp-cli"),
 		"openclaw install manifest should use the API's category")
 
@@ -124,6 +124,13 @@ func TestSkillFallsBackWhenNarrativeAbsent(t *testing.T) {
 // LLM-authored narrative fields with double quotes, newlines, or
 // backslashes don't break the YAML frontmatter. Without escaping, an
 // inner " collapses the outer scalar and every YAML parser fails.
+//
+// The trigger-phrase cases specifically exercise the combination that
+// tripped up an earlier draft: backslashes and double quotes inside
+// phrases wrapped by the template's visual delimiters. The outer scalar
+// is double-quoted, so the delimiters themselves are literal characters
+// (not a nested YAML scalar) — which means yamlDoubleQuoted's escape
+// rules are the right ones to apply here. This test locks that in.
 func TestSkillFrontmatterEscapesNarrativeQuotesAndNewlines(t *testing.T) {
 	t.Parallel()
 
@@ -132,8 +139,14 @@ func TestSkillFrontmatterEscapesNarrativeQuotesAndNewlines(t *testing.T) {
 	outputDir := filepath.Join(t.TempDir(), "yamlsafe-pp-cli")
 	gen := New(apiSpec, outputDir)
 	gen.Narrative = &ReadmeNarrative{
-		Headline:       `An "agent-native" CLI with \backslash and "quotes"`,
-		TriggerPhrases: []string{`what's the "best" price`, "simple phrase"},
+		Headline: `An "agent-native" CLI with \backslash and "quotes"`,
+		TriggerPhrases: []string{
+			`what's the "best" price`, // apostrophe + double quotes
+			`path\to\file`,            // backslashes
+			`use "quoted"`,            // double quotes
+			`has\"mixed\"`,            // backslash + double quote combo
+			`simple phrase`,           // baseline
+		},
 	}
 	require.NoError(t, gen.Generate())
 
@@ -163,8 +176,20 @@ func TestSkillFrontmatterEscapesNarrativeQuotesAndNewlines(t *testing.T) {
 		"double quotes in headline should round-trip through YAML parse: got %q", parsed.Description)
 	assert.True(t, strings.Contains(parsed.Description, `\backslash`),
 		"backslashes in headline should round-trip through YAML parse: got %q", parsed.Description)
-	assert.True(t, strings.Contains(parsed.Description, `what's the "best" price`),
-		"quotes in trigger phrases should round-trip: got %q", parsed.Description)
+	// Every trigger phrase must round-trip verbatim. This is the one the
+	// reviewer called out: backslash and double-quote combinations are the
+	// most failure-prone shapes and must not require a patch each time we
+	// touch the template.
+	for _, want := range []string{
+		`what's the "best" price`,
+		`path\to\file`,
+		`use "quoted"`,
+		`has\"mixed\"`,
+		`simple phrase`,
+	} {
+		assert.True(t, strings.Contains(parsed.Description, want),
+			"trigger phrase %q should round-trip verbatim through YAML parse; got description: %q", want, parsed.Description)
+	}
 }
 
 // TestSkillFrontmatterFallbackHandlesMultilineSpecDescription asserts that

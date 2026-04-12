@@ -300,21 +300,27 @@ func New(s *spec.APISpec, outputDir string) *Generator {
 			s = strings.ReplaceAll(s, "\t", `\t`)
 			return s
 		},
-		// yamlSingleQuoted escapes a string for safe embedding inside a YAML
-		// single-quoted scalar. Only single quotes need escaping — doubled
-		// per YAML 1.2 spec. Used for trigger phrases where we want to
-		// preserve double quotes naturally.
-		"yamlSingleQuoted": func(s string) string {
-			return strings.ReplaceAll(s, `'`, `''`)
-		},
 		// groupNovelFeatures clusters features by their Group field, preserving
 		// first-seen order of group names. Features with empty Group land in a
 		// trailing "More" bucket so nothing gets dropped. Returns nil when no
 		// feature carries a Group value — callers should then render flat.
+		//
+		// Group matching is canonicalized (lowercase + whitespace collapsed)
+		// because the absorb LLM will not produce exact-match strings — given
+		// five features in "Local state that compounds" it will usually emit
+		// at least one "Local State That Compounds" or "local state that
+		// compounds" by drift. Without canonicalization these silently render
+		// as separate groups and a reader skimming the README sees the
+		// grouping as broken. We canonicalize for bucketing but render the
+		// first-seen display form so the LLM's casing choice wins — it's
+		// usually the more legible one.
 		"groupNovelFeatures": func(features []NovelFeature) []novelFeatureGroup {
+			canonGroup := func(s string) string {
+				return strings.Join(strings.Fields(strings.ToLower(s)), " ")
+			}
 			anyGrouped := false
 			for _, f := range features {
-				if f.Group != "" {
+				if canonGroup(f.Group) != "" {
 					anyGrouped = true
 					break
 				}
@@ -322,21 +328,25 @@ func New(s *spec.APISpec, outputDir string) *Generator {
 			if !anyGrouped {
 				return nil
 			}
-			order := []string{}
+			order := []string{}                // canonical keys in first-seen order
+			displayName := map[string]string{} // canonical → first-seen display form
 			byGroup := map[string][]NovelFeature{}
 			for _, f := range features {
-				g := f.Group
-				if g == "" {
-					g = "More"
+				display := f.Group
+				key := canonGroup(display)
+				if key == "" {
+					key = "more"
+					display = "More"
 				}
-				if _, seen := byGroup[g]; !seen {
-					order = append(order, g)
+				if _, seen := byGroup[key]; !seen {
+					order = append(order, key)
+					displayName[key] = display
 				}
-				byGroup[g] = append(byGroup[g], f)
+				byGroup[key] = append(byGroup[key], f)
 			}
 			out := make([]novelFeatureGroup, 0, len(order))
-			for _, g := range order {
-				out = append(out, novelFeatureGroup{Name: g, Features: byGroup[g]})
+			for _, key := range order {
+				out = append(out, novelFeatureGroup{Name: displayName[key], Features: byGroup[key]})
 			}
 			return out
 		},
