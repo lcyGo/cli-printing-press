@@ -62,6 +62,29 @@ type KnownAlt struct {
 	Language string `yaml:"language"`
 }
 
+// WrapperLibrary describes a community-maintained library that wraps an API
+// without an official OpenAPI spec. The generator uses these as implementation
+// backing when the primary source is reverse-engineered rather than spec-driven.
+//
+// IntegrationMode values:
+//   - native: library is in Go and can be imported directly
+//   - subprocess: library is in another language and must be invoked as a subprocess
+//   - html-scrape: no library — the entry documents a reverse-engineering technique
+type WrapperLibrary struct {
+	Name            string `yaml:"name"`
+	URL             string `yaml:"url"`
+	Language        string `yaml:"language"`
+	License         string `yaml:"license,omitempty"`
+	IntegrationMode string `yaml:"integration_mode"`
+	Notes           string `yaml:"notes,omitempty"`
+}
+
+var validIntegrationModes = map[string]struct{}{
+	"native":      {},
+	"subprocess":  {},
+	"html-scrape": {},
+}
+
 type Entry struct {
 	Name              string     `yaml:"name"`
 	DisplayName       string     `yaml:"display_name"`
@@ -87,6 +110,16 @@ type Entry struct {
 	// ProxyRoutes maps path prefixes to backend service names for proxy-envelope APIs.
 	// Only relevant when ClientPattern is "proxy-envelope".
 	ProxyRoutes map[string]string `yaml:"proxy_routes,omitempty"`
+	// WrapperLibraries lists reverse-engineered community libraries the generator
+	// can use as implementation backing when no official spec exists. When this
+	// list is non-empty, spec_url and spec_format are optional.
+	WrapperLibraries []WrapperLibrary `yaml:"wrapper_libraries,omitempty"`
+}
+
+// IsWrapperOnly reports whether this entry represents an API reached through
+// community wrapper libraries rather than an official spec.
+func (e *Entry) IsWrapperOnly() bool {
+	return e.SpecURL == "" && len(e.WrapperLibraries) > 0
 }
 
 func ParseEntry(data []byte) (*Entry, error) {
@@ -169,17 +202,45 @@ func (e *Entry) Validate() error {
 	if _, ok := validCategories[e.Category]; !ok {
 		return fmt.Errorf("category must be one of: %s", strings.Join(PublicCategories(), ", "))
 	}
-	if e.SpecURL == "" {
-		return fmt.Errorf("spec_url is required")
+	wrapperOnly := len(e.WrapperLibraries) > 0 && e.SpecURL == ""
+	if !wrapperOnly {
+		if e.SpecURL == "" {
+			return fmt.Errorf("spec_url is required (or populate wrapper_libraries for a wrapper-only entry)")
+		}
+		if !strings.HasPrefix(e.SpecURL, "https://") {
+			return fmt.Errorf(`spec_url must start with "https://"`)
+		}
+		if e.SpecFormat == "" {
+			return fmt.Errorf("spec_format is required")
+		}
+		if _, ok := validSpecFormats[e.SpecFormat]; !ok {
+			return fmt.Errorf("spec_format must be one of: yaml, json")
+		}
+	} else if e.SpecFormat != "" {
+		if _, ok := validSpecFormats[e.SpecFormat]; !ok {
+			return fmt.Errorf("spec_format must be one of: yaml, json")
+		}
 	}
-	if !strings.HasPrefix(e.SpecURL, "https://") {
-		return fmt.Errorf(`spec_url must start with "https://"`)
-	}
-	if e.SpecFormat == "" {
-		return fmt.Errorf("spec_format is required")
-	}
-	if _, ok := validSpecFormats[e.SpecFormat]; !ok {
-		return fmt.Errorf("spec_format must be one of: yaml, json")
+
+	for i, w := range e.WrapperLibraries {
+		if w.Name == "" {
+			return fmt.Errorf("wrapper_libraries[%d]: name is required", i)
+		}
+		if w.URL == "" {
+			return fmt.Errorf("wrapper_libraries[%d]: url is required", i)
+		}
+		if !strings.HasPrefix(w.URL, "https://") {
+			return fmt.Errorf(`wrapper_libraries[%d]: url must start with "https://"`, i)
+		}
+		if w.Language == "" {
+			return fmt.Errorf("wrapper_libraries[%d]: language is required", i)
+		}
+		if w.IntegrationMode == "" {
+			return fmt.Errorf("wrapper_libraries[%d]: integration_mode is required", i)
+		}
+		if _, ok := validIntegrationModes[w.IntegrationMode]; !ok {
+			return fmt.Errorf("wrapper_libraries[%d]: integration_mode must be one of: native, subprocess, html-scrape", i)
+		}
 	}
 	if e.Tier == "" {
 		return fmt.Errorf("tier is required")

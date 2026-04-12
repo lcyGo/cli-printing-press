@@ -246,6 +246,95 @@ func TestOptionalFieldsOmittedValid(t *testing.T) {
 	assert.Empty(t, entry.ClientPattern)
 }
 
+func TestWrapperOnlyEntryValid(t *testing.T) {
+	entry := Entry{
+		Name:        "google-flights",
+		DisplayName: "Google Flights",
+		Description: "Flight search via reverse-engineered wrapper libraries",
+		Category:    "other",
+		Tier:        "community",
+		WrapperLibraries: []WrapperLibrary{
+			{
+				Name:            "krisukox/google-flights-api",
+				URL:             "https://github.com/krisukox/google-flights-api",
+				Language:        "go",
+				License:         "MIT",
+				IntegrationMode: "native",
+			},
+		},
+	}
+	assert.NoError(t, entry.Validate())
+	assert.True(t, entry.IsWrapperOnly())
+}
+
+func TestWrapperEntryRequiresIntegrationMode(t *testing.T) {
+	entry := Entry{
+		Name:        "test-wrapper",
+		DisplayName: "Test",
+		Description: "Test",
+		Category:    "other",
+		Tier:        "community",
+		WrapperLibraries: []WrapperLibrary{
+			{Name: "lib", URL: "https://github.com/example/lib", Language: "go"},
+		},
+	}
+	err := entry.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "integration_mode is required")
+}
+
+func TestWrapperEntryRejectsInvalidIntegrationMode(t *testing.T) {
+	entry := Entry{
+		Name:        "test-wrapper",
+		DisplayName: "Test",
+		Description: "Test",
+		Category:    "other",
+		Tier:        "community",
+		WrapperLibraries: []WrapperLibrary{
+			{Name: "lib", URL: "https://github.com/example/lib", Language: "go", IntegrationMode: "ffi"},
+		},
+	}
+	err := entry.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "integration_mode must be one of")
+}
+
+func TestWrapperEntryRequiresHTTPSURL(t *testing.T) {
+	entry := Entry{
+		Name:        "test-wrapper",
+		DisplayName: "Test",
+		Description: "Test",
+		Category:    "other",
+		Tier:        "community",
+		WrapperLibraries: []WrapperLibrary{
+			{Name: "lib", URL: "http://example.com", Language: "go", IntegrationMode: "native"},
+		},
+	}
+	err := entry.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `url must start with "https://"`)
+}
+
+func TestSpecURLRequiredWhenNoWrapperLibraries(t *testing.T) {
+	entry := Entry{
+		Name:        "test-api",
+		DisplayName: "Test",
+		Description: "Test",
+		Category:    "other",
+		Tier:        "community",
+	}
+	err := entry.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "spec_url is required")
+}
+
+func TestEmbeddedCatalogParsesWrapperOnlyEntries(t *testing.T) {
+	entry, err := LookupFS(catalogfs.FS, "google-flights")
+	require.NoError(t, err)
+	assert.True(t, entry.IsWrapperOnly())
+	assert.NotEmpty(t, entry.WrapperLibraries)
+}
+
 func TestPublicCategoriesExcludeExample(t *testing.T) {
 	categories := PublicCategories()
 	assert.NotContains(t, categories, "example")

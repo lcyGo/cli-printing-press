@@ -477,13 +477,28 @@ Before starting research, check if the API has a built-in catalog entry:
 printing-press catalog show <api> --json 2>/dev/null
 ```
 
-If the catalog has an entry for this API, present the user with a choice:
+If the catalog has an entry for this API, branch on the entry type:
+
+**Spec-based entry** (`spec_url` populated) — present the user with a choice:
 
 > "<API> is in the built-in catalog (spec: <spec_url>). Use the catalog config to skip discovery, or run full discovery?"
 
 - If catalog config: use the spec_url from the catalog entry, skip the research/discovery phase
 - If full discovery: proceed with the normal research workflow
-- If the catalog doesn't have this API: proceed normally without mentioning the catalog
+
+**Wrapper-only entry** (no `spec_url`, `wrapper_libraries` populated) — this is a reverse-engineered API that has no official spec but has known community libraries the generator can use as implementation backing. Do not try to resolve or sniff a spec. Instead, surface the wrapper options to the user via `AskUserQuestion`:
+
+> "<API> has no official spec. The catalog knows about these community-maintained implementations:"
+
+Present each `wrapper_libraries` entry as a selectable option with language, integration mode, and notes. Example for `google-flights`:
+- **krisukox/google-flights-api** (Go, native, MIT) — Pure Go, importable; single-binary CLI with no runtime deps.
+- **punitarani/fli** (Python, subprocess, MIT) — broader feature coverage (multi-leg, cabin class); requires Python 3.10+ at runtime.
+
+Capture the user's choice and record it in `$API_RUN_DIR/state.json` under an `implementation` field: `{ "library": "<name>", "url": "<url>", "integration_mode": "native|subprocess|html-scrape" }`. Phase 3 generation reads this to decide whether to `go get` a wrapper, emit a subprocess shell-out, or emit HTML-scrape code. Skip the spec-analysis step entirely — there is no spec.
+
+**No catalog hit** — proceed normally without mentioning the catalog.
+
+**Adding new wrapper-only APIs:** drop a YAML file in `catalog/` with `wrapper_libraries` populated and rebuild the binary. No skill changes needed.
 
 Write one build-driving brief, not a stack of phase essays.
 

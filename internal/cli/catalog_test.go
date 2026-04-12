@@ -41,7 +41,10 @@ func TestCatalogListJSON(t *testing.T) {
 
 	for _, e := range entries {
 		assert.NotEmpty(t, e.Name)
-		assert.NotEmpty(t, e.SpecURL)
+		// Every entry must have either a spec_url or wrapper_libraries.
+		if e.SpecURL == "" {
+			assert.NotEmpty(t, e.WrapperLibraries, "entry %s has no spec_url and no wrapper_libraries", e.Name)
+		}
 	}
 }
 

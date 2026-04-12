@@ -108,8 +108,12 @@ func newCatalogShowCmd() *cobra.Command {
 			fmt.Printf("Description:    %s\n", entry.Description)
 			fmt.Printf("Category:       %s\n", entry.Category)
 			fmt.Printf("Tier:           %s\n", entry.Tier)
-			fmt.Printf("Spec URL:       %s\n", entry.SpecURL)
-			fmt.Printf("Spec Format:    %s\n", entry.SpecFormat)
+			if entry.IsWrapperOnly() {
+				fmt.Printf("Mode:           wrapper-only (no official spec)\n")
+			} else {
+				fmt.Printf("Spec URL:       %s\n", entry.SpecURL)
+				fmt.Printf("Spec Format:    %s\n", entry.SpecFormat)
+			}
 			if entry.OpenAPIVersion != "" {
 				fmt.Printf("OpenAPI:        %s\n", entry.OpenAPIVersion)
 			}
@@ -130,6 +134,19 @@ func newCatalogShowCmd() *cobra.Command {
 			}
 			if entry.VerifiedDate != "" {
 				fmt.Printf("Verified:       %s\n", entry.VerifiedDate)
+			}
+			if len(entry.WrapperLibraries) > 0 {
+				fmt.Printf("\nWrapper Libraries:\n")
+				for _, w := range entry.WrapperLibraries {
+					fmt.Printf("  - %s (%s, %s)\n", w.Name, w.Language, w.IntegrationMode)
+					fmt.Printf("    %s\n", w.URL)
+					if w.License != "" {
+						fmt.Printf("    License: %s\n", w.License)
+					}
+					if w.Notes != "" {
+						fmt.Printf("    Notes: %s\n", strings.TrimSpace(w.Notes))
+					}
+				}
 			}
 
 			return nil
