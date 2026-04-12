@@ -51,10 +51,17 @@ func TestReleasePleaseAnnotationExists(t *testing.T) {
 }
 
 func TestVersionConsistencyAcrossFiles(t *testing.T) {
-	// All version surfaces should match. release-please keeps them
-	// in sync, but this catches manual edits that drift.
+	// The plugin's version lives in exactly two places:
+	//   - .claude-plugin/plugin.json ($.version)
+	//   - internal/version/version.go (Version const, ldflags target)
+	// release-please keeps both in lockstep; this test catches manual drift.
+	//
+	// marketplace.json intentionally does NOT carry a per-plugin version —
+	// its $.metadata.version describes the marketplace format itself, not
+	// any individual plugin entry. If either of those separate versions
+	// ever needs to be asserted, add its own test; do not re-couple them
+	// here.
 
-	// Read plugin.json version
 	pluginData, err := os.ReadFile("../../.claude-plugin/plugin.json")
 	require.NoError(t, err)
 
@@ -63,21 +70,26 @@ func TestVersionConsistencyAcrossFiles(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(pluginData, &plugin))
 
-	// Read marketplace.json version
+	assert.Equal(t, plugin.Version, version.Version,
+		"plugin.json and version.go hardcoded version must match")
+}
+
+func TestMarketplaceJSONHasNoPluginVersion(t *testing.T) {
+	// Guard against a reviewer (or release-please misconfiguration) re-adding
+	// a per-plugin version field to marketplace.json. Plugin versions live
+	// only in plugin.json; this file catalogs plugins, not their versions.
 	marketData, err := os.ReadFile("../../.claude-plugin/marketplace.json")
 	require.NoError(t, err)
 
 	var market struct {
-		Plugins []struct {
-			Version string `json:"version"`
-		} `json:"plugins"`
+		Plugins []map[string]any `json:"plugins"`
 	}
 	require.NoError(t, json.Unmarshal(marketData, &market))
 	require.NotEmpty(t, market.Plugins)
 
-	// All three should match
-	assert.Equal(t, plugin.Version, market.Plugins[0].Version,
-		"plugin.json and marketplace.json versions must match")
-	assert.Equal(t, plugin.Version, version.Version,
-		"plugin.json and version.go hardcoded version must match")
+	for i, p := range market.Plugins {
+		if _, has := p["version"]; has {
+			t.Errorf("marketplace.json plugins[%d] should not declare a version (belongs in plugin.json only)", i)
+		}
+	}
 }

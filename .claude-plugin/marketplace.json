@@ -10,7 +10,6 @@
   "plugins": [
     {
       "name": "cli-printing-press",
-      "version": "1.3.2",
       "description": "Describe your API. Get a production CLI. Generates Go CLI tools from OpenAPI specs or natural language descriptions.",
       "author": {
         "name": "mvanhorn"
