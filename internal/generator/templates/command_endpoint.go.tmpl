@@ -50,6 +50,23 @@ func new{{camel .FuncPrefix}}{{camel .EndpointName}}Cmd(flags *rootFlags) *cobra
 			}
 {{- end}}
 {{- end}}
+{{- range .Endpoint.Params}}
+{{- if and .Enum (not .Positional) (eq .Type "string")}}
+			if cmd.Flags().Changed("{{flagName .Name}}") {
+				allowed{{camel .Name}} := []string{ {{enumLiteral .Enum}} }
+				valid{{camel .Name}} := false
+				for _, v := range allowed{{camel .Name}} {
+					if flag{{camel .Name}} == v {
+						valid{{camel .Name}} = true
+						break
+					}
+				}
+				if !valid{{camel .Name}} {
+					fmt.Fprintf(os.Stderr, "warning: --%s %q not in allowed set %v\n", "{{flagName .Name}}", flag{{camel .Name}}, allowed{{camel .Name}})
+				}
+			}
+{{- end}}
+{{- end}}
 {{- if or (eq .Endpoint.Method "POST") (eq .Endpoint.Method "PUT") (eq .Endpoint.Method "PATCH")}}
 			if !stdinBody {
 {{- range .Endpoint.Body}}
@@ -334,7 +351,7 @@ func new{{camel .FuncPrefix}}{{camel .EndpointName}}Cmd(flags *rootFlags) *cobra
 
 {{- range .Endpoint.Params}}
 {{- if not .Positional}}
-	cmd.Flags().{{cobraFlagFuncForParam .Name .Type}}(&flag{{camel .Name}}, "{{flagName .Name}}", {{defaultValForParam .}}, "{{oneline .Description}}")
+	cmd.Flags().{{cobraFlagFuncForParam .Name .Type}}(&flag{{camel .Name}}, "{{flagName .Name}}", {{defaultValForParam .}}, "{{oneline .Description}}{{enumDescriptionHint .Enum}}")
 {{- end}}
 {{- end}}
 {{- range .Endpoint.Body}}

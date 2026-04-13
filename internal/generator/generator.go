@@ -212,6 +212,27 @@ func New(s *spec.APISpec, outputDir string) *Generator {
 			// "steam-web" → "Steam Web", "notion" → "Notion"
 			return cases.Title(language.English).String(strings.ReplaceAll(s, "-", " "))
 		},
+		"enumLiteral": func(values []string) string {
+			// Render a string slice as a Go []string literal for template embedding.
+			// Example: ["asc","desc"] → `"asc", "desc"`. Returns empty string when
+			// the slice is empty so callers can {{if}}-gate the block.
+			if len(values) == 0 {
+				return ""
+			}
+			parts := make([]string, len(values))
+			for i, v := range values {
+				parts[i] = fmt.Sprintf("%q", v)
+			}
+			return strings.Join(parts, ", ")
+		},
+		"enumDescriptionHint": func(values []string) string {
+			// Appends " (one of: a, b, c)" to a flag description when the param
+			// has enum constraints. Returns empty string when the slice is empty.
+			if len(values) == 0 {
+				return ""
+			}
+			return " (one of: " + strings.Join(values, ", ") + ")"
+		},
 		"envName":  func(s string) string { return strings.ToUpper(strings.ReplaceAll(s, "-", "_")) },
 		"safeName": safeSQLName,
 		"pathContainsParam": func(path, name string) bool {
