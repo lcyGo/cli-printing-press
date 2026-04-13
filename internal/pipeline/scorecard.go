@@ -102,10 +102,17 @@ func RunScorecard(outputDir, pipelineDir, specPath string, verifyReport *VerifyR
 			return nil, err
 		}
 
-		pathValidity := evaluatePathValidity(outputDir, spec)
-		sc.Steinberger.PathValidity = pathValidity.score
-		if !pathValidity.scored {
+		if spec.IsSynthetic() {
+			// Hand-built commands intentionally go beyond the spec; path-validity
+			// is not applicable. Mark unscored so the tier-2 denominator excludes
+			// it rather than awarding a 10-point cushion the CLI didn't earn.
 			sc.UnscoredDimensions = append(sc.UnscoredDimensions, "path_validity")
+		} else {
+			pathValidity := evaluatePathValidity(outputDir, spec)
+			sc.Steinberger.PathValidity = pathValidity.score
+			if !pathValidity.scored {
+				sc.UnscoredDimensions = append(sc.UnscoredDimensions, "path_validity")
+			}
 		}
 
 		authProtocol := evaluateAuthProtocol(outputDir, spec)
@@ -1074,6 +1081,11 @@ type openAPISpecInfo struct {
 	Paths                []string
 	SecuritySchemes      map[string]openAPISecurityScheme
 	SecurityRequirements []securityRequirementSet
+	Kind                 string // see apispec.KindREST / apispec.KindSynthetic
+}
+
+func (s *openAPISpecInfo) IsSynthetic() bool {
+	return s != nil && s.Kind == apispec.KindSynthetic
 }
 
 func loadOpenAPISpec(specPath string) (*openAPISpecInfo, error) {

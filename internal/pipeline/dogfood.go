@@ -47,6 +47,8 @@ type PathCheckResult struct {
 	Valid   int      `json:"valid"`
 	Invalid []string `json:"invalid,omitempty"`
 	Pct     int      `json:"valid_pct"`
+	Skipped bool     `json:"skipped,omitempty"`
+	Detail  string   `json:"detail,omitempty"`
 }
 
 type AuthCheckResult struct {
@@ -109,6 +111,11 @@ type WorkflowCompleteResult struct {
 type openAPISpec struct {
 	Paths []string
 	Auth  apispec.AuthConfig
+	Kind  string // see apispec.KindREST / apispec.KindSynthetic
+}
+
+func (s *openAPISpec) IsSynthetic() bool {
+	return s != nil && s.Kind == apispec.KindSynthetic
 }
 
 func RunDogfood(dir, specPath string, opts ...DogfoodOption) (*DogfoodReport, error) {
@@ -131,7 +138,17 @@ func RunDogfood(dir, specPath string, opts ...DogfoodOption) (*DogfoodReport, er
 		}
 		spec = loaded
 
-		report.PathCheck = checkPaths(dir, spec.Paths)
+		if spec.IsSynthetic() {
+			// Synthetic CLIs intentionally go beyond the spec; strict
+			// path-validity would flag every hand-built command. Record as
+			// skipped (not as a misleading 100% pass).
+			report.PathCheck = PathCheckResult{
+				Skipped: true,
+				Detail:  "synthetic spec: path validity not applicable",
+			}
+		} else {
+			report.PathCheck = checkPaths(dir, spec.Paths)
+		}
 		report.AuthCheck = checkAuth(dir, spec.Auth)
 	} else {
 		report.AuthCheck = AuthCheckResult{

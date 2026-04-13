@@ -42,6 +42,7 @@ func internalSpecToDogfoodSpec(s *apispec.APISpec) *openAPISpec {
 	return &openAPISpec{
 		Paths: collectInternalSpecPaths(s),
 		Auth:  s.Auth,
+		Kind:  s.Kind,
 	}
 }
 
@@ -51,6 +52,7 @@ func internalSpecToOpenAPISpecInfo(s *apispec.APISpec) *openAPISpecInfo {
 	info := &openAPISpecInfo{
 		Paths:           collectInternalSpecPaths(s),
 		SecuritySchemes: make(map[string]openAPISecurityScheme),
+		Kind:            s.Kind,
 	}
 
 	// Map auth config to a synthetic security scheme so scorecard auth

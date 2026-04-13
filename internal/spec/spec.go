@@ -9,6 +9,15 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Valid values for APISpec.Kind. A bare string with no const was the
+// established convention for sibling fields (SpecSource, ClientPattern), but
+// Kind is compared in production code at multiple sites, so the constant
+// prevents typos from silently falling through to the default-rest path.
+const (
+	KindREST      = "rest"      // default; strict path-validity against the spec
+	KindSynthetic = "synthetic" // multi-source / combo CLI; dogfood + scorecard relax path-validity
+)
+
 type APISpec struct {
 	Name            string              `yaml:"name" json:"name"`
 	Description     string              `yaml:"description" json:"description"`
@@ -16,6 +25,7 @@ type APISpec struct {
 	BaseURL         string              `yaml:"base_url" json:"base_url"`
 	BasePath        string              `yaml:"base_path,omitempty" json:"base_path,omitempty"`
 	Owner           string              `yaml:"owner,omitempty" json:"owner,omitempty"`                   // GitHub owner for import paths and Homebrew tap
+	Kind            string              `yaml:"kind,omitempty" json:"kind,omitempty"`                     // "rest" (default) or "synthetic" — synthetic CLIs aggregate multiple sources beyond the spec; dogfood's path-validity check is relaxed accordingly
 	SpecSource      string              `yaml:"spec_source,omitempty" json:"spec_source,omitempty"`       // official, community, sniffed, docs — affects generated client defaults
 	ClientPattern   string              `yaml:"client_pattern,omitempty" json:"client_pattern,omitempty"` // rest (default), proxy-envelope — affects generated HTTP client
 	ProxyRoutes     map[string]string   `yaml:"proxy_routes,omitempty" json:"proxy_routes,omitempty"`     // path prefix → service name for proxy-envelope routing
@@ -26,6 +36,13 @@ type APISpec struct {
 	Config          ConfigSpec          `yaml:"config" json:"config"`
 	Resources       map[string]Resource `yaml:"resources" json:"resources"`
 	Types           map[string]TypeDef  `yaml:"types" json:"types"`
+}
+
+// IsSynthetic reports whether this spec declares a multi-source / combo CLI
+// where hand-built commands intentionally go beyond the spec. Dogfood skips
+// strict path-validity and scorecard marks path_validity as unscored.
+func (s *APISpec) IsSynthetic() bool {
+	return s != nil && s.Kind == KindSynthetic
 }
 
 // RequiredHeader represents a non-auth header that the API requires on most
