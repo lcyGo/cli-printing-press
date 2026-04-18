@@ -29,7 +29,7 @@ type by hand, now running digital machinery with the same pride of craft.
 | **Spec** | The API contract that drives generation. |
 | **The Printing Press** | This whole system — binary, templates, skills, catalog. |
 | **Absorb Manifest** | The feature inventory from Phase 1.5. Everything to build. |
-| **Sniff Gate** | Decision point on whether to capture live site traffic. |
+| **Browser-Sniff Gate** | Decision point on whether to capture live site traffic. |
 | **Quality Gates** | The 7 static checks every Printed CLI must pass. |
 
 ## Examples

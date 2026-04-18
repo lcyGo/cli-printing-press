@@ -14,10 +14,10 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/mvanhorn/cli-printing-press/internal/browsersniff"
 	"github.com/mvanhorn/cli-printing-press/internal/naming"
 	"github.com/mvanhorn/cli-printing-press/internal/profiler"
 	"github.com/mvanhorn/cli-printing-press/internal/spec"
-	"github.com/mvanhorn/cli-printing-press/internal/websniff"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 )
@@ -120,9 +120,9 @@ type Generator struct {
 	Spec           *spec.APISpec
 	OutputDir      string
 	VisionSet      VisionTemplateSet
-	FixtureSet     *websniff.FixtureSet
+	FixtureSet     *browsersniff.FixtureSet
 	Sources        []ReadmeSource          // Ecosystem tools to credit in README
-	DiscoveryPages []string                // Pages visited during sniff discovery
+	DiscoveryPages []string                // Pages visited during browser-sniff discovery
 	NovelFeatures  []NovelFeature          // Transcendence features for README/SKILL
 	Narrative      *ReadmeNarrative        // LLM-authored prose for README/SKILL; optional
 	AsyncJobs      map[string]AsyncJobInfo // Detected async-job endpoints, keyed by "<resource>/<endpoint>"
@@ -498,7 +498,9 @@ type readmeTemplateData struct {
 }
 
 func (g *Generator) readmeData() *readmeTemplateData {
-	// For sniffed APIs without a website URL, derive it from the base URL domain
+	// The "sniffed" spec_source is the legacy provenance name for browser-captured
+	// specs (produced by the browser-sniff command). Kept for compatibility; a
+	// migration to "browser-sniffed" is deferred — see docs/plans/2026-04-18-002.
 	if g.Spec.WebsiteURL == "" && g.Spec.SpecSource == "sniffed" && g.Spec.BaseURL != "" {
 		if u, err := url.Parse(g.Spec.BaseURL); err == nil && u.Host != "" {
 			g.Spec.WebsiteURL = u.Scheme + "://" + u.Host

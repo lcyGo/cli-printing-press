@@ -116,7 +116,7 @@ func ResolveBaseURL(explicit string, candidates []string) string {
 	return ""
 }
 
-// --- Helpers adapted from websniff/specgen.go ---
+// --- Helpers adapted from browsersniff/specgen.go ---
 
 func deriveResourceKey(path string) (string, string) {
 	segments := significantSegments(path)

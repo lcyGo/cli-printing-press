@@ -496,7 +496,7 @@ func TestParseDiscoveryPages(t *testing.T) {
 
 	t.Run("extracts URLs from pages visited section", func(t *testing.T) {
 		dir := t.TempDir()
-		content := `# Sniff Report
+		content := `# Browser-Sniff Report
 
 ## Pages Visited
 
@@ -508,7 +508,7 @@ func TestParseDiscoveryPages(t *testing.T) {
 
 - GET /api/v1/items
 `
-		require.NoError(t, os.WriteFile(dir+"/sniff-report.md", []byte(content), 0o644))
+		require.NoError(t, os.WriteFile(dir+"/browser-sniff-report.md", []byte(content), 0o644))
 		pages := ParseDiscoveryPages(dir)
 		require.Len(t, pages, 2)
 		assert.Equal(t, "https://example.com/app", pages[0])
@@ -517,7 +517,7 @@ func TestParseDiscoveryPages(t *testing.T) {
 
 	t.Run("empty pages section returns nil", func(t *testing.T) {
 		dir := t.TempDir()
-		content := `# Sniff Report
+		content := `# Browser-Sniff Report
 
 ## Pages Visited
 
@@ -525,7 +525,22 @@ func TestParseDiscoveryPages(t *testing.T) {
 
 - GET /api/v1/items
 `
-		require.NoError(t, os.WriteFile(dir+"/sniff-report.md", []byte(content), 0o644))
+		require.NoError(t, os.WriteFile(dir+"/browser-sniff-report.md", []byte(content), 0o644))
 		assert.Nil(t, ParseDiscoveryPages(dir))
+	})
+
+	// Clean-break contract (D3): when only the pre-rename legacy filename is
+	// present, ParseDiscoveryPages must NOT silently fall back to reading it.
+	// This test guards against anyone later adding fallback-read logic.
+	t.Run("legacy sniff-report.md is not read", func(t *testing.T) {
+		dir := t.TempDir()
+		content := `# Sniff Report
+
+## Pages Visited
+
+- https://example.com/legacy
+`
+		require.NoError(t, os.WriteFile(dir+"/sniff-report.md", []byte(content), 0o644))
+		assert.Nil(t, ParseDiscoveryPages(dir), "legacy sniff-report.md must be ignored — no fallback read")
 	})
 }

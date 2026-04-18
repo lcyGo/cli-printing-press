@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/mvanhorn/cli-printing-press/internal/browsersniff"
 	"github.com/mvanhorn/cli-printing-press/internal/crowdsniff"
-	"github.com/mvanhorn/cli-printing-press/internal/websniff"
 	"github.com/spf13/cobra"
 	"golang.org/x/sync/errgroup"
 )
@@ -44,7 +44,7 @@ func newCrowdSniffCmdWithOptions(opts crowdSniffOptions) *cobra.Command {
 		Long: `Discover API endpoints by mining community signals: npm SDK packages
 and GitHub code search. Produces a spec YAML compatible with 'printing-press generate'.
 
-Complements 'sniff' (which discovers from live web traffic) by finding
+Complements 'browser-sniff' (which discovers from live web traffic) by finding
 what developers have already mapped in published packages and code.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runCrowdSniff(cmd.Context(), apiName, baseURL, outputPath, asJSON, opts)
@@ -147,7 +147,7 @@ func runCrowdSniff(ctx context.Context, apiName, baseURL, outputPath string, asJ
 		outputPath = defaultCrowdSniffCachePath(apiName)
 	}
 
-	if err := websniff.WriteSpec(apiSpec, outputPath); err != nil {
+	if err := browsersniff.WriteSpec(apiSpec, outputPath); err != nil {
 		return fmt.Errorf("writing spec: %w", err)
 	}
 

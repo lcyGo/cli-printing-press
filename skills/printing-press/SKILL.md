@@ -168,7 +168,7 @@ Print as prose (in Victorian voice):
 
 If the user provided `--spec`, adapt: "You have provided a spec, so I shall skip discovery and proceed directly to analysis and generation. Should be faster."
 
-If the user provided `--har`, adapt: "You have provided a HAR capture, so I shall generate a spec from your traffic and skip browser sniffing."
+If the user provided `--har`, adapt: "You have provided a HAR capture, so I shall generate a spec from your traffic and skip browser browser-sniffing."
 
 Then ask via `AskUserQuestion`:
 
@@ -186,7 +186,7 @@ If the user selects **"I have context to share"**, capture their free-text respo
 - Used as a 4th self-brainstorm question in Phase 1.5c.5: "Based on the user's stated vision, what features directly serve their stated goals that the absorbed features don't cover?"
 - Referenced at the Phase Gate 1.5 absorb gate: "You mentioned [summary] at the start. Want to add more, or does the manifest already cover it?"
 
-If the user selects **"I have an API key or I'm logged in"**, ask which one and capture it. Set `AUTH_CONTEXT` fields so the API Key Gate (Phase 0.5) and Pre-Sniff Auth Intelligence (Phase 1.6, if implemented) do not re-ask.
+If the user selects **"I have an API key or I'm logged in"**, ask which one and capture it. Set `AUTH_CONTEXT` fields so the API Key Gate (Phase 0.5) and Pre-Browser-Sniff Auth Intelligence (Phase 1.6, if implemented) do not re-ask.
 
 ### Multi-Source Priority Gate
 
@@ -215,7 +215,7 @@ Write the confirmed ordering to `$API_RUN_DIR/source-priority.json`:
 }
 ```
 
-**Phase 1 MUST consult this file.** When selecting a spec source, the primary source wins even if it has no spec and a later source has a clean OpenAPI. When the primary has no official spec, flag that openly in the brief under `## Source Priority` (see template below) and route to the sniff/docs path for the primary — do not promote a secondary source just because its spec is cleaner.
+**Phase 1 MUST consult this file.** When selecting a spec source, the primary source wins even if it has no spec and a later source has a clean OpenAPI. When the primary has no official spec, flag that openly in the brief under `## Source Priority` (see template below) and route to the browser-sniff/docs path for the primary — do not promote a secondary source just because its spec is cleaner.
 
 **Economics check.** If the confirmed primary source is free (no API key required) AND the generator's default path would make the primary CLI commands require a paid key (because the auth applies broadly or because a paid secondary source is bleeding into the primary path), surface the tradeoff explicitly before generating:
 
@@ -406,13 +406,13 @@ Before new research:
    The user can also pick the automatic "Other" option to describe what they're after in free text.
 
    **Routing after disambiguation:**
-   - "<SiteName>'s official API" → use `<api>` as the argument, proceed with normal discovery (Phase 1 research, then Phase 1.7 sniff gate evaluates independently as usual)
-   - "The <SiteName> website itself" → use `<api>` as the argument, set `SNIFF_TARGET_URL=<url>`. Proceed to Phase 1 research. When Phase 1.7 is reached, skip the sniff gate decision and go directly to "If user approves sniff" (the user already approved in Phase 0 — do not re-ask). Use `SNIFF_TARGET_URL` as the starting URL for browser capture.
+   - "<SiteName>'s official API" → use `<api>` as the argument, proceed with normal discovery (Phase 1 research, then Phase 1.7 browser-sniff gate evaluates independently as usual)
+   - "The <SiteName> website itself" → use `<api>` as the argument, set `BROWSER_SNIFF_TARGET_URL=<url>`. Proceed to Phase 1 research. When Phase 1.7 is reached, skip the browser-sniff gate decision and go directly to "If user approves browser-sniff" (the user already approved in Phase 0 — do not re-ask). Use `BROWSER_SNIFF_TARGET_URL` as the starting URL for browser capture.
    - "Other" → read the user's free-form response and adapt
 
    **End of URL detection.** The remaining spec resolution rules apply when the argument is NOT a URL:
 
-   - If the user passed `--har <path>`, this is a HAR-first run. Run `printing-press sniff --har <path> --name <api> --output "$RESEARCH_DIR/<api>-sniff-spec.yaml"` to generate a spec from captured traffic. Use the generated spec as the primary spec source for the rest of the pipeline. Skip the sniff gate in Phase 1.7 (sniff already ran).
+   - If the user passed `--har <path>`, this is a HAR-first run. Run `printing-press browser-sniff --har <path> --name <api> --output "$RESEARCH_DIR/<api>-browser-sniff-spec.yaml"` to generate a spec from captured traffic. Use the generated spec as the primary spec source for the rest of the pipeline. Skip the browser-sniff gate in Phase 1.7 (browser-sniff already ran).
    - If the user passed `--spec`, use it directly (existing behavior).
    - Otherwise, proceed with normal discovery (catalog, KnownSpecs, apis-guru, web search).
 2. Check for prior research in:
@@ -525,7 +525,7 @@ Resolve the API key gate (or skip it for public APIs) before moving to Phase 1.
 
 ## Phase 1: Research Brief
 
-**When `SNIFF_TARGET_URL` is set:** Skip the catalog check, spec/docs search, and SDK wrapper search — none of these exist for an undocumented website feature. Focus research on understanding what the site/feature does, who uses it, what workflows it supports, and what competitors offer similar functionality. The spec will come from sniffing in Phase 1.7.
+**When `BROWSER_SNIFF_TARGET_URL` is set:** Skip the catalog check, spec/docs search, and SDK wrapper search — none of these exist for an undocumented website feature. Focus research on understanding what the site/feature does, who uses it, what workflows it supports, and what competitors offer similar functionality. The spec will come from browser-sniffing in Phase 1.7.
 
 Before starting research, check if the API has a built-in catalog entry:
 
@@ -542,7 +542,7 @@ If the catalog has an entry for this API, branch on the entry type:
 - If catalog config: use the spec_url from the catalog entry, skip the research/discovery phase
 - If full discovery: proceed with the normal research workflow
 
-**Wrapper-only entry** (no `spec_url`, `wrapper_libraries` populated) — this is a reverse-engineered API that has no official spec but has known community libraries the generator can use as implementation backing. Do not try to resolve or sniff a spec. Instead, surface the wrapper options to the user via `AskUserQuestion`:
+**Wrapper-only entry** (no `spec_url`, `wrapper_libraries` populated) — this is a reverse-engineered API that has no official spec but has known community libraries the generator can use as implementation backing. Do not try to resolve or browser-sniff a spec. Instead, surface the wrapper options to the user via `AskUserQuestion`:
 
 > "<API> has no official spec. The catalog knows about these community-maintained implementations:"
 
@@ -625,7 +625,7 @@ Suggested shape:
 
 ## Source Priority
 - [Only present for combo CLIs. Copy the confirmed ordering from `source-priority.json`.]
-- Primary: <Source A> — [spec state: official / community-wrapper / no-spec-sniff-required] — [auth: free / paid]
+- Primary: <Source A> — [spec state: official / community-wrapper / no-spec-browser-sniff-required] — [auth: free / paid]
 - Secondary: <Source B> — [...]
 - Tertiary: <Source C> — [...]
 - **Economics:** [e.g., "Primary is free; paid key for <Source B> is scoped to its own commands only."]
@@ -641,13 +641,13 @@ Suggested shape:
 3. ...
 ```
 
-**MANDATORY: Before proceeding to Phase 1.5 (Absorb Gate), you MUST evaluate Phase 1.6 (Pre-Sniff Auth Intelligence), Phase 1.7 (Sniff Gate), and Phase 1.8 (Crowd Sniff Gate) below.** If no spec source has been resolved yet (no `--spec`, no `--har`, no catalog spec URL), the sniff gate decision matrix MUST be evaluated. Do not skip to Phase 1.5.
+**MANDATORY: Before proceeding to Phase 1.5 (Absorb Gate), you MUST evaluate Phase 1.6 (Pre-Browser-Sniff Auth Intelligence), Phase 1.7 (Browser-Sniff Gate), and Phase 1.8 (Crowd-Sniff Gate) below.** If no spec source has been resolved yet (no `--spec`, no `--har`, no catalog spec URL), the browser-sniff gate decision matrix MUST be evaluated. Do not skip to Phase 1.5.
 
-**Phase 1.5 will refuse to proceed without a `sniff-gate.json` marker file.** Phase 1.7 writes this file with one entry per source (one entry for single-source CLIs, one entry per named source for combo CLIs). Missing marker = HARD STOP back to Phase 1.7. See Phase 1.7 "Enforcement" below for the contract.
+**Phase 1.5 will refuse to proceed without a `browser-browser-sniff-gate.json` marker file.** Phase 1.7 writes this file with one entry per source (one entry for single-source CLIs, one entry per named source for combo CLIs). Missing marker = HARD STOP back to Phase 1.7. See Phase 1.7 "Enforcement" below for the contract.
 
-## Phase 1.6: Pre-Sniff Auth Intelligence
+## Phase 1.6: Pre-Browser-Sniff Auth Intelligence
 
-After Phase 1 research completes, analyze findings to proactively assess what auth context the user could provide. This step uses research intelligence to ask the right question before sniffing starts, rather than waiting for the user to volunteer "I logged in."
+After Phase 1 research completes, analyze findings to proactively assess what auth context the user could provide. This step uses research intelligence to ask the right question before browser-sniffing starts, rather than waiting for the user to volunteer "I logged in."
 
 **Skip this step if:** The briefing (Orientation & Briefing section) already captured auth context (`AUTH_CONTEXT` is set from the user selecting "I have an API key or I'm logged in").
 
@@ -656,9 +656,9 @@ After Phase 1 research completes, analyze findings to proactively assess what au
 | Signal from research | Auth profile | What to ask |
 |---------------------|-------------|-------------|
 | Community wrappers use API keys (e.g., `STRIPE_SECRET_KEY`), MCP source shows `Authorization: Bearer` headers, spec has `security` section | **API key auth** | "Do you have an API key for `<API>`?" |
-| Site has user accounts, research found auth-only features (order history, saved items, rewards, account settings), login pages exist | **Browser session auth** | "This API has authenticated endpoints ([list specific features from research, e.g., order history, saved addresses, rewards]). Are you logged in to `<site>` in your browser? The sniff will find more endpoints if you are." |
+| Site has user accounts, research found auth-only features (order history, saved items, rewards, account settings), login pages exist | **Browser session auth** | "This API has authenticated endpoints ([list specific features from research, e.g., order history, saved addresses, rewards]). Are you logged in to `<site>` in your browser? The browser-sniff will find more endpoints if you are." |
 | Endpoints accessible without auth, no login-gated features found, community wrappers describe API as "no auth required" | **No auth needed** | Skip this step silently |
-| Both API key AND browser session features found | **Dual auth** | Ask about both: API key for smoke testing, browser session for sniff |
+| Both API key AND browser session features found | **Dual auth** | Ask about both: API key for smoke testing, browser session for browser-sniff |
 
 **Name the specific features the user would unlock.** Do not say "auth would help." Say "This API has order history, saved addresses, and rewards that require a logged-in session."
 
@@ -679,25 +679,25 @@ If the user provides a key, set it in `AUTH_CONTEXT` so the API Key Gate (Phase 
 **For browser session auth:** Present via `AskUserQuestion`:
 > "`<API>` has authenticated endpoints ([list features]). Are you logged in to `<site>` in your browser? If so, the generated CLI will support `auth login --chrome` — you'll be able to authenticate just by being logged into the site in Chrome. No API key needed."
 >
-> 1. **Yes, I'm logged in** — I'll use your session during sniff and enable browser auth in the CLI
-> 2. **No, but I can log in** — I'll help you log in before sniffing
-> 3. **No, skip authenticated endpoints** — sniff only public endpoints
+> 1. **Yes, I'm logged in** — I'll use your session during browser-sniff and enable browser auth in the CLI
+> 2. **No, but I can log in** — I'll help you log in before browser-sniffing
+> 3. **No, skip authenticated endpoints** — browser-sniff only public endpoints
 
-Set `AUTH_SESSION_AVAILABLE=true` if the user selects option 1 or 2. The Sniff Gate (Phase 1.7) will use this flag. After traffic capture, Step 2d in [references/sniff-capture.md](references/sniff-capture.md) validates that cookie replay works before enabling browser auth in the generated CLI.
+Set `AUTH_SESSION_AVAILABLE=true` if the user selects option 1 or 2. The Browser-Sniff Gate (Phase 1.7) will use this flag. After traffic capture, Step 2d in [references/browser-sniff-capture.md](references/browser-sniff-capture.md) validates that cookie replay works before enabling browser auth in the generated CLI.
 
 **For dual auth:** Ask about both in sequence — API key first (simple env var check), then browser session.
 
 ---
 
-## Phase 1.7: Sniff Gate
+## Phase 1.7: Browser-Sniff Gate
 
-After Phase 1 research, evaluate whether sniffing the live site would improve the spec. This phase MUST produce a decision marker file for every source named in the briefing before Phase 1.5 can proceed.
+After Phase 1 research, evaluate whether browser-sniffing the live site would improve the spec. This phase MUST produce a decision marker file for every source named in the briefing before Phase 1.5 can proceed.
 
-### Enforcement: the sniff-gate.json marker file
+### Enforcement: the browser-browser-sniff-gate.json marker file
 
 Phase 1.7 is a hard gate. Phase 1.5 reads a marker file and refuses to proceed without it. The model cannot skip this phase by reasoning around it.
 
-**Marker file location:** `$PRESS_RUNSTATE/runs/$RUN_ID/sniff-gate.json`
+**Marker file location:** `$PRESS_RUNSTATE/runs/$RUN_ID/browser-browser-sniff-gate.json`
 
 **Marker file shape:**
 
@@ -717,10 +717,10 @@ Phase 1.7 is a hard gate. Phase 1.5 reads a marker file and refuses to proceed w
 
 **Decision values:**
 
-- `approved` — user selected a sniff option via `AskUserQuestion`. Proceed to "If user approves sniff".
-- `declined` — user explicitly declined sniff via `AskUserQuestion`. Proceed to "If user declines sniff".
+- `approved` — user selected a browser-sniff option via `AskUserQuestion`. Proceed to "If user approves browser-sniff".
+- `declined` — user explicitly declined browser-sniff via `AskUserQuestion`. Proceed to "If user declines browser-sniff".
 - `skip-silent` — gate was silently skipped per the decision matrix (spec complete, `--har` provided, `--spec` provided, or login required with `AUTH_SESSION_AVAILABLE=false`). The `reason` field names which.
-- `pre-approved` — user already chose "The website itself" in Phase 0, so `SNIFF_TARGET_URL` was set and the question was answered there.
+- `pre-approved` — user already chose "The website itself" in Phase 0, so `BROWSER_SNIFF_TARGET_URL` was set and the question was answered there.
 
 **Every path through Phase 1.7 MUST write a marker entry** — approve, decline, and every silent-skip case. There is no code path that proceeds to Phase 1.5 without writing the marker.
 
@@ -728,16 +728,16 @@ Phase 1.7 is a hard gate. Phase 1.5 reads a marker file and refuses to proceed w
 
 ### Banned skip reasons
 
-The following rationales are NOT valid reasons to skip the sniff gate. If any of these apply, you MUST still ask the user via `AskUserQuestion` and record their answer in the marker file:
+The following rationales are NOT valid reasons to skip the browser-sniff gate. If any of these apply, you MUST still ask the user via `AskUserQuestion` and record their answer in the marker file:
 
-- **"The target is client-rendered and needs Playwright"** — browser capture tools (browser-use, agent-browser) exist specifically to handle client-rendered sites. Hard-to-sniff is not the same as impossible-to-sniff. Ask.
-- **"The 3-minute time budget looks tight"** — the time budget applies AFTER the user approves sniff, not before. You do not pre-judge whether a sniff will fit the budget. Ask. If the budget blows after the user approves, fall back per the Time Budget rules below.
+- **"The target is client-rendered and needs Playwright"** — browser capture tools (browser-use, agent-browser) exist specifically to handle client-rendered sites. A hard-to-browser-sniff target is not the same as an impossible one. Ask.
+- **"The 3-minute time budget looks tight"** — the time budget applies AFTER the user approves browser-sniff, not before. You do not pre-judge whether a browser-sniff will fit the budget. Ask. If the budget blows after the user approves, fall back per the Time Budget rules below.
 - **"We have a substitute data source from another API"** — substituting one source for another is the user's call, not yours. If the user named a specific site or feature (e.g., Kayak /direct), they chose it deliberately. Ask about that exact source. Offering a different data source is a separate conversation AFTER the gate, not a reason to skip it.
-- **"Installing browser-use or agent-browser is friction"** — the sniff capture reference already documents the install path. Tooling friction is not a valid skip reason. Ask.
+- **"Installing browser-use or agent-browser is friction"** — the browser-sniff capture reference already documents the install path. Tooling friction is not a valid skip reason. Ask.
 - **"The documentation looks thorough enough"** — the decision matrix already handles this case explicitly. If research found that competitors or community projects reference more endpoints than the spec covers, that IS a gap and you MUST ask.
 - **"The user said 'let's go' earlier and implicitly approved everything"** — "let's go" at the briefing stage is consent to proceed with research, not standing approval for every future decision. Ask each gate individually.
 
-These banned reasons all fired at once in a past combo-CLI run and caused a user-critical source to be silently swapped out. The marker file exists so this cannot happen again. If you find yourself writing a phrase like "skipping sniff because X" where X is one of the above, stop and call `AskUserQuestion`.
+These banned reasons all fired at once in a past combo-CLI run and caused a user-critical source to be silently swapped out. The marker file exists so this cannot happen again. If you find yourself writing a phrase like "skipping browser-sniff because X" where X is one of the above, stop and call `AskUserQuestion`.
 
 ### Combo CLIs: per-source enforcement
 
@@ -747,7 +747,7 @@ When the briefing names multiple sources (e.g., "Google Flights + Kayak + Flight
 
 **Per-source decision flow:**
 
-For each named source, run the "When to offer sniff" decision matrix independently, using the research findings for THAT source. Each source produces its own `AskUserQuestion` call or its own silent-skip marker entry.
+For each named source, run the "When to offer browser-sniff" decision matrix independently, using the research findings for THAT source. Each source produces its own `AskUserQuestion` call or its own silent-skip marker entry.
 
 **Combo CLI example** (flightgoat pattern — directional guidance, not prescription):
 
@@ -767,58 +767,58 @@ These are the only cases where Phase 1.7 is bypassed as a whole (not just skippe
 
 - User passed `--spec` and the spec is the canonical source for every named source → marker: `{ "source_name": "<api>", "decision": "skip-silent", "reason": "user-provided-spec" }`
 - User passed `--har` → marker: `{ "source_name": "<api>", "decision": "skip-silent", "reason": "user-provided-har" }`
-- `SNIFF_TARGET_URL` is set from Phase 0 (user chose "The website itself") → marker: `{ "source_name": "<api>", "decision": "pre-approved", "reason": "phase-0-website-choice" }`, then go directly to "If user approves sniff"
+- `BROWSER_SNIFF_TARGET_URL` is set from Phase 0 (user chose "The website itself") → marker: `{ "source_name": "<api>", "decision": "pre-approved", "reason": "phase-0-website-choice" }`, then go directly to "If user approves browser-sniff"
 
 ### Time budget
 
-The sniff gate should complete within 3 minutes of the user approving sniff. If browser automation tooling fails to produce results after 3 minutes of attempts, fall back immediately:
-- If a spec already exists (enrichment mode): "Sniff failed after 3 minutes — proceeding with existing spec."
-- If no spec exists (primary mode): "Sniff failed after 3 minutes — falling back to --docs generation."
+The browser-sniff gate should complete within 3 minutes of the user approving browser-sniff. If browser automation tooling fails to produce results after 3 minutes of attempts, fall back immediately:
+- If a spec already exists (enrichment mode): "Browser-Sniff failed after 3 minutes — proceeding with existing spec."
+- If no spec exists (primary mode): "Browser-Sniff failed after 3 minutes — falling back to --docs generation."
 
-Do NOT spend time debugging tool integration issues. The sniff is optional enrichment, not a blocking requirement. If the first approach fails, fall back to the next option — do not retry the same broken approach.
+Do NOT spend time debugging tool integration issues. The browser-sniff is optional enrichment, not a blocking requirement. If the first approach fails, fall back to the next option — do not retry the same broken approach.
 
 **The time budget applies AFTER the user approves.** Do not use it as a reason to skip the gate before asking.
 
-### When to offer sniff
+### When to offer browser-sniff
 
 | Spec found? | Research shows gaps? | Auth required? | Action |
 |-------------|---------------------|----------------|--------|
-| Yes | Yes — docs or competitors show significantly more endpoints than the spec | No | **MUST offer sniff as enrichment** |
+| Yes | Yes — docs or competitors show significantly more endpoints than the spec | No | **MUST offer browser-sniff as enrichment** |
 | Yes | No — spec appears complete | Any | Skip silently (write marker with `decision: skip-silent`) |
-| No | Community docs exist (e.g., Public-ESPN-API) | No | **MUST offer sniff OR --docs** — present both options so the user decides |
-| No | No docs found either | No | **MUST offer sniff as primary discovery** |
-| No | N/A | Yes (login) + `AUTH_SESSION_AVAILABLE=true` | **Offer authenticated sniff** — the user confirmed a session in Phase 1.6 |
+| No | Community docs exist (e.g., Public-ESPN-API) | No | **MUST offer browser-sniff OR --docs** — present both options so the user decides |
+| No | No docs found either | No | **MUST offer browser-sniff as primary discovery** |
+| No | N/A | Yes (login) + `AUTH_SESSION_AVAILABLE=true` | **Offer authenticated browser-sniff** — the user confirmed a session in Phase 1.6 |
 | No | N/A | Yes (login) + `AUTH_SESSION_AVAILABLE=false` | Skip — fall back to `--docs` (write marker with `decision: skip-silent`, `reason: login-required-no-session`) |
 
 **Gap detection heuristic:** If Phase 1 research found documentation, competitor tools, or community projects that reference significantly more endpoints or features than the resolved spec covers, that's a gap signal. Example: "The Zuplo OpenAPI spec has 42 endpoints, but the Public-ESPN-API docs describe 370+."
 
-**When the decision matrix says "Offer sniff", you MUST ask the user via `AskUserQuestion`.** Skipping the question and writing a `skip-silent` marker is a contract violation — `skip-silent` is only valid when the matrix says "Skip silently" or one of the Banned Skip Reasons is the only thing holding you back (in which case, you should be asking anyway).
+**When the decision matrix says "Offer browser-sniff", you MUST ask the user via `AskUserQuestion`.** Skipping the question and writing a `skip-silent` marker is a contract violation — `skip-silent` is only valid when the matrix says "Skip silently" or one of the Banned Skip Reasons is the only thing holding you back (in which case, you should be asking anyway).
 
-### Sniff as enrichment (spec exists but has gaps)
+### Browser-Sniff as enrichment (spec exists but has gaps)
 
 Present to the user via `AskUserQuestion`:
 
-> "Found a spec with **N endpoints**, but research shows the live API likely has more (competitors reference M+ features). Want me to sniff `<url>` to discover endpoints the spec missed? I'll check for browser-use or agent-browser and install if needed."
+> "Found a spec with **N endpoints**, but research shows the live API likely has more (competitors reference M+ features). Want me to browser-sniff `<url>` to discover endpoints the spec missed? I'll check for browser-use or agent-browser and install if needed."
 >
 > Options:
-> 1. **Yes — sniff and merge** (browse the site, capture traffic, merge discovered endpoints with the existing spec. Installs capture tools if needed.)
+> 1. **Yes — browser-sniff and merge** (browse the site, capture traffic, merge discovered endpoints with the existing spec. Installs capture tools if needed.)
 > 2. **No — use existing spec** (proceed with what we have)
 
-### Sniff as primary (no spec found)
+### Browser-Sniff as primary (no spec found)
 
-Present to the user via `AskUserQuestion`. **If `AUTH_SESSION_AVAILABLE=true`**, include an authenticated sniff option:
+Present to the user via `AskUserQuestion`. **If `AUTH_SESSION_AVAILABLE=true`**, include an authenticated browser-sniff option:
 
-> "No OpenAPI spec found for `<API>`. Want me to sniff `<likely-url>` to discover the API from live traffic?"
+> "No OpenAPI spec found for `<API>`. Want me to browser-sniff `<likely-url>` to discover the API from live traffic?"
 >
 > Options:
-> 1. **Yes — authenticated sniff** (use your browser session to discover both public and authenticated endpoints. Recommended since you confirmed a session.) *(Only show when `AUTH_SESSION_AVAILABLE=true`)*
-> 2. **Yes — sniff the live site** (browse `<url>` anonymously, capture API calls, generate a spec. Installs capture tools if needed.)
+> 1. **Yes — authenticated browser-sniff** (use your browser session to discover both public and authenticated endpoints. Recommended since you confirmed a session.) *(Only show when `AUTH_SESSION_AVAILABLE=true`)*
+> 2. **Yes — browser-sniff the live site** (browse `<url>` anonymously, capture API calls, generate a spec. Installs capture tools if needed.)
 > 3. **No — use docs instead** (attempt `--docs` generation from documentation pages)
 > 4. **No — I'll provide a spec or HAR** (user will supply input manually)
 
 When `AUTH_SESSION_AVAILABLE=false`, show only options 2-4 (the existing 3-option prompt).
 
-### If user approves sniff
+### If user approves browser-sniff
 
 **Before doing anything else, write the marker entry** for this source:
 
@@ -826,18 +826,18 @@ When `AUTH_SESSION_AVAILABLE=false`, show only options 2-4 (the existing 3-optio
 {
   "source_name": "<normalized name from briefing>",
   "decision": "approved",
-  "reason": "<which option they picked, e.g., 'authenticated sniff' or 'sniff and merge'>",
+  "reason": "<which option they picked, e.g., 'authenticated browser-sniff' or 'browser-sniff and merge'>",
   "asked_at": "<current ISO8601 timestamp>"
 }
 ```
 
-Append it to `$PRESS_RUNSTATE/runs/$RUN_ID/sniff-gate.json` (create the file if it doesn't exist).
+Append it to `$PRESS_RUNSTATE/runs/$RUN_ID/browser-browser-sniff-gate.json` (create the file if it doesn't exist).
 
 #### Step 0: Identify the User Goal
 
 Before building the capture plan, answer one question: **What does the end user of this CLI actually want to do?**
 
-Read the research brief's Top Workflows. The #1 workflow IS the primary sniff goal. State it in one sentence:
+Read the research brief's Top Workflows. The #1 workflow IS the primary browser-sniff goal. State it in one sentence:
 - Domino's: "Order a pizza for delivery"
 - Linear: "Create an issue and assign it to a sprint"
 - Stripe: "Create a payment intent and confirm it"
@@ -846,15 +846,15 @@ Read the research brief's Top Workflows. The #1 workflow IS the primary sniff go
 
 If the API is read-only (news, weather, data feeds), the primary goal is "fetch and filter data" and the flow is search/filter/paginate rather than a multi-step transaction.
 
-The sniff will walk through this goal as an interactive user flow. Secondary workflows become secondary sniff passes if time permits.
+The browser-sniff will walk through this goal as an interactive user flow. Secondary workflows become secondary browser-sniff passes if time permits.
 
-State the goal explicitly before proceeding: "Primary sniff goal: [goal]. I will walk through this as a user flow."
+State the goal explicitly before proceeding: "Primary browser-sniff goal: [goal]. I will walk through this as a user flow."
 
-Then read and follow [references/sniff-capture.md](references/sniff-capture.md) for the complete
-sniff implementation: tool detection, installation, session transfer, browser-use/agent-browser
+Then read and follow [references/browser-sniff-capture.md](references/browser-sniff-capture.md) for the complete
+browser-sniff implementation: tool detection, installation, session transfer, browser-use/agent-browser
 capture, HAR analysis, and discovery report writing.
 
-### If user declines sniff
+### If user declines browser-sniff
 
 **Write the marker entry** for this source before proceeding:
 
@@ -867,60 +867,60 @@ capture, HAR analysis, and discovery report writing.
 }
 ```
 
-Append it to `$PRESS_RUNSTATE/runs/$RUN_ID/sniff-gate.json`.
+Append it to `$PRESS_RUNSTATE/runs/$RUN_ID/browser-browser-sniff-gate.json`.
 
 Proceed with whatever spec source exists. If no spec was found, fall back to `--docs` or ask the user to provide a spec/HAR manually.
 
 ### Before leaving Phase 1.7
 
-Every source named in the briefing must have exactly one entry in `sniff-gate.json`. Before proceeding to Phase 1.8, re-read the marker file and verify the count matches the number of named sources from the briefing. If a source is missing, return to the decision matrix for that source. Phase 1.5 will HALT if this check fails.
+Every source named in the briefing must have exactly one entry in `browser-browser-sniff-gate.json`. Before proceeding to Phase 1.8, re-read the marker file and verify the count matches the number of named sources from the briefing. If a source is missing, return to the decision matrix for that source. Phase 1.5 will HALT if this check fails.
 
 ---
 
-## Phase 1.8: Crowd Sniff Gate
+## Phase 1.8: Crowd-Sniff Gate
 
-After Phase 1.7 (Sniff Gate), evaluate whether mining community signals (npm SDKs and GitHub code search) would improve the spec. Skip this gate entirely if the user already passed `--spec` (spec source is already resolved and appears complete).
+After Phase 1.7 (Browser-Sniff Gate), evaluate whether mining community signals (npm SDKs and GitHub code search) would improve the spec. Skip this gate entirely if the user already passed `--spec` (spec source is already resolved and appears complete).
 
-**Time budget:** The crowd sniff gate should complete within 5 minutes. If `printing-press crowd-sniff` fails or times out, fall back immediately:
-- If a spec already exists: "Crowd sniff failed — proceeding with existing spec."
-- If no spec exists: "Crowd sniff failed — falling back to --docs generation."
+**Time budget:** The crowd-sniff gate should complete within 5 minutes. If `printing-press crowd-sniff` fails or times out, fall back immediately:
+- If a spec already exists: "Crowd-sniff failed — proceeding with existing spec."
+- If no spec exists: "Crowd-sniff failed — falling back to --docs generation."
 
-### When to offer crowd sniff
+### When to offer crowd-sniff
 
 | Spec found? | Research shows gaps? | Action |
 |-------------|---------------------|--------|
-| Yes | Yes — competitors or community projects reference more endpoints | **Offer crowd sniff as enrichment** |
+| Yes | Yes — competitors or community projects reference more endpoints | **Offer crowd-sniff as enrichment** |
 | Yes | No — spec appears complete | Skip silently |
-| No | Community SDKs exist on npm | **Offer crowd sniff as primary discovery** |
+| No | Community SDKs exist on npm | **Offer crowd-sniff as primary discovery** |
 | No | No SDKs or code found | Skip — fall back to `--docs` |
 
-### Crowd sniff as enrichment (spec exists but has gaps)
+### Crowd-sniff as enrichment (spec exists but has gaps)
 
 Present to the user via `AskUserQuestion`:
 
 > "Found a spec with **N endpoints**, but research shows the live API likely has more. Want me to search npm packages and GitHub code for `<api>` to discover additional endpoints? This typically takes 2-4 minutes."
 >
 > Options:
-> 1. **Yes — crowd sniff and merge** (search npm SDKs and GitHub code, merge discovered endpoints with the existing spec)
+> 1. **Yes — crowd-sniff and merge** (search npm SDKs and GitHub code, merge discovered endpoints with the existing spec)
 > 2. **No — use existing spec** (proceed with what we have)
 
-### Crowd sniff as primary (no spec found)
+### Crowd-sniff as primary (no spec found)
 
 Present to the user via `AskUserQuestion`:
 
 > "No OpenAPI spec found for `<API>`. Want me to search npm packages and GitHub code to discover the API from community usage? This typically takes 2-4 minutes."
 >
 > Options:
-> 1. **Yes — crowd sniff the community** (search npm SDKs and GitHub code, generate a spec from discovered endpoints)
+> 1. **Yes — crowd-sniff the community** (search npm SDKs and GitHub code, generate a spec from discovered endpoints)
 > 2. **No — use docs instead** (attempt `--docs` generation from documentation pages)
 > 3. **No — I'll provide a spec or HAR** (user will supply input manually)
 
-### If user approves crowd sniff
+### If user approves crowd-sniff
 
 Read and follow [references/crowd-sniff.md](references/crowd-sniff.md) for the crowd-sniff
 command, provenance capture, and discovery report writing.
 
-### If user declines crowd sniff
+### If user declines crowd-sniff
 
 Proceed with whatever spec source exists. If no spec was found, fall back to `--docs` or ask the user to provide a spec/HAR manually.
 
@@ -930,25 +930,25 @@ Proceed with whatever spec source exists. If no spec was found, fall back to `--
 
 THIS IS A MANDATORY STOP GATE. Do not generate until this is complete and approved.
 
-### Pre-flight check: sniff-gate marker
+### Pre-flight check: browser-sniff-gate marker
 
-Before any absorb work, verify `$PRESS_RUNSTATE/runs/$RUN_ID/sniff-gate.json` exists and contains an entry for every source named in the briefing.
+Before any absorb work, verify `$PRESS_RUNSTATE/runs/$RUN_ID/browser-browser-sniff-gate.json` exists and contains an entry for every source named in the briefing.
 
 **If the file is missing:** HARD STOP. Print:
 
-> Phase 1.7 Sniff Gate did not record a decision. Return to Phase 1.7 and evaluate the sniff gate for every source named in the briefing.
+> Phase 1.7 Browser-Sniff Gate did not record a decision. Return to Phase 1.7 and evaluate the browser-sniff gate for every source named in the briefing.
 
 Do not proceed to Step 1.5a until the file exists.
 
 **If the file exists but is missing an entry for a named source:** HARD STOP. Print:
 
-> Sniff Gate missing decision for source `<name>`. Return to Phase 1.7 and evaluate the decision matrix for that source.
+> Browser-Sniff Gate missing decision for source `<name>`. Return to Phase 1.7 and evaluate the decision matrix for that source.
 
 Do not proceed until every briefing source has a marker entry.
 
 **Resume leniency:** If the run was started by an older version of the skill that didn't write markers, warn and continue — do not hard-fail on legacy resumes. Distinguish by checking whether `state.json` predates the marker contract (the marker file didn't exist before 2026-04-11). New runs always hard-fail on a missing marker.
 
-**Pre-check (existing):** If no spec or HAR file has been resolved by this point and Phase 1.7 (Sniff Gate) was not evaluated, STOP. Go back and run the sniff gate decision matrix. The absorb manifest depends on knowing the API surface, which requires a spec.
+**Pre-check (existing):** If no spec or HAR file has been resolved by this point and Phase 1.7 (Browser-Sniff Gate) was not evaluated, STOP. Go back and run the browser-sniff gate decision matrix. The absorb manifest depends on knowing the API surface, which requires a spec.
 
 The GOAT CLI doesn't "find gaps." It absorbs EVERY feature from EVERY tool and then transcends with compound use cases nobody thought of. This phase builds the absorb manifest.
 
@@ -1145,7 +1145,7 @@ For each tool, fill in what you know from the research. Stars and command_count 
 8. `trigger_phrases` are natural-language phrases a user might say that should invoke this CLI's skill. Include 3–5 domain-specific phrases (e.g. for a finance CLI: "quote AAPL", "check my portfolio", "options for TSLA") and 2 generic phrases ("use <api-name>", "run <api-name>"). Domain verbs vary — don't just template "use X" variants.
 9. All `narrative` fields are optional. Omit fields you can't populate honestly rather than emit filler. The generator falls back to generic content gracefully.
 
-Also write discovery pages if sniff was used. The generator reads these from `$API_RUN_DIR/discovery/sniff-report.md` (which the sniff gate already writes there). No additional action needed for discovery pages -- they are already in the right location.
+Also write discovery pages if browser-sniff was used. The generator reads these from `$API_RUN_DIR/discovery/browser-sniff-report.md` (which the browser-sniff gate already writes there). No additional action needed for discovery pages -- they are already in the right location.
 
 ### Priority inversion check (combo CLIs only)
 
@@ -1160,13 +1160,13 @@ When an inversion is detected, HALT before Phase Gate 1.5 and print:
 
 > ⚠ **Priority inversion detected.**
 >
-> The confirmed primary is **<Source A>** but the manifest gives it <N> commands vs **<Source B>** (secondary) with <M> commands. This usually means the primary's discovery path (sniff, community wrapper, HTML parser) didn't land, and the secondary's clean spec took over.
+> The confirmed primary is **<Source A>** but the manifest gives it <N> commands vs **<Source B>** (secondary) with <M> commands. This usually means the primary's discovery path (browser-sniff, community wrapper, HTML parser) didn't land, and the secondary's clean spec took over.
 >
 > The user said <Source A> is the headline. Shipping this manifest would invert their stated priority.
 
 Then ask via `AskUserQuestion`:
 
-1. **Re-run discovery for <Source A>** — loop back to Phase 1.7 sniff or Phase 1.8 crowd sniff for the primary source specifically.
+1. **Re-run discovery for <Source A>** — loop back to Phase 1.7 browser-sniff or Phase 1.8 crowd-sniff for the primary source specifically.
 2. **Accept the inversion** — the user explicitly confirms they're fine with the secondary leading. Record this in `source-priority.json` as `inversion_accepted: true`.
 3. **Drop <Source B>** — remove the secondary from the manifest so it can't overshadow the primary.
 
@@ -1239,7 +1239,7 @@ Or use `WebFetch` if curl is unavailable. The goal is one real response code.
 
 ### Decision Matrix
 
-| Result | Sniff gate failed? | Research found 403 issues? | Action |
+| Result | Browser-Sniff gate failed? | Research found 403 issues? | Action |
 |--------|-------------------|---------------------------|--------|
 | 2xx/3xx | Any | Any | **PASS** - proceed to Phase 2 |
 | 401 (no key provided) | No | No | **PASS** - expected when API needs auth and user declined key gate |
@@ -1253,7 +1253,7 @@ Or use `WebFetch` if curl is unavailable. The goal is one real response code.
 
 Present via `AskUserQuestion`:
 
-> "WARNING: `<API>` appears to block programmatic access. [what failed: e.g., 'HTTP 403 with HTML error page', 'sniff gate failed with bot detection', 'reteps/redfin has 6+ issues about 403 errors']. Building a CLI against an unreachable API wastes time and tokens."
+> "WARNING: `<API>` appears to block programmatic access. [what failed: e.g., 'HTTP 403 with HTML error page', 'browser-sniff gate failed with bot detection', 'reteps/redfin has 6+ issues about 403 errors']. Building a CLI against an unreachable API wastes time and tokens."
 >
 > 1. **Try anyway** - proceed knowing the CLI may not work against the live API
 > 2. **Pick a different API** - start over
@@ -1279,8 +1279,8 @@ Proceed silently to Phase 2.
 ### Pre-Generation Auth Enrichment
 
 Before generating, check whether the resolved spec has auth. This matters most for
-sniffed and crowd-sniffed specs where the mechanical auth detection may have failed
-(e.g., session expired during sniff, SDK didn't expose auth patterns).
+browser-sniffed and crowd-sniffed specs where the mechanical auth detection may have failed
+(e.g., session expired during browser-sniff, SDK didn't expose auth patterns).
 
 **Check the spec:**
 - For internal YAML specs: look for `auth:` section with `type:` not equal to `"none"`
@@ -1291,7 +1291,7 @@ auth signals, enrich the spec before generation:
 
 1. Check the research brief for auth mentions (Bearer, API key, token, cookie, OAuth)
 2. Check Phase 1.5a MCP source code analysis for auth patterns (header names, token formats)
-3. Check Phase 1.6 Pre-Sniff Auth Intelligence results (if the user confirmed auth)
+3. Check Phase 1.6 Pre-Browser-Sniff Auth Intelligence results (if the user confirmed auth)
 
 If any source identified auth, **edit the spec YAML** to add the auth section before
 running generate. For internal YAML specs:
@@ -1338,35 +1338,35 @@ printing-press generate \
   --force --lenient --validate
 ```
 
-Sniff-enriched (original spec + sniff-discovered spec):
+Browser-browser-sniff-enriched (original spec + browser-sniff-discovered spec):
 
 ```bash
 printing-press generate \
   --spec <original-spec-path-or-url> \
-  --spec "$RESEARCH_DIR/<api>-sniff-spec.yaml" \
+  --spec "$RESEARCH_DIR/<api>-browser-sniff-spec.yaml" \
   --name <api> \
   --output "$CLI_WORK_DIR" \
   --research-dir "$API_RUN_DIR" \
-  --spec-source sniffed \
+  --spec-source browser-sniffed \
   --force --lenient --validate
-# If proxy pattern was detected during sniff, add:
+# If proxy pattern was detected during browser-sniff, add:
 #   --client-pattern proxy-envelope
 ```
 
-Sniff-only (no original spec, sniff was the primary source):
+Sniff-only (no original spec, browser-sniff was the primary source):
 
 ```bash
 printing-press generate \
-  --spec "$RESEARCH_DIR/<api>-sniff-spec.yaml" \
+  --spec "$RESEARCH_DIR/<api>-browser-sniff-spec.yaml" \
   --output "$CLI_WORK_DIR" \
   --research-dir "$API_RUN_DIR" \
-  --spec-source sniffed \
+  --spec-source browser-sniffed \
   --force --lenient --validate
-# If proxy pattern was detected during sniff, add:
+# If proxy pattern was detected during browser-sniff, add:
 #   --client-pattern proxy-envelope
 ```
 
-Crowd-sniff-enriched (original spec + crowd-discovered spec):
+Crowd-browser-sniff-enriched (original spec + crowd-discovered spec):
 
 ```bash
 printing-press generate \
@@ -1378,7 +1378,7 @@ printing-press generate \
   --force --lenient --validate
 ```
 
-Crowd-sniff-only (no original spec, crowd sniff was the primary source):
+Crowd-sniff-only (no original spec, crowd-sniff was the primary source):
 
 ```bash
 printing-press generate \
@@ -1388,12 +1388,12 @@ printing-press generate \
   --force --lenient --validate
 ```
 
-Both sniff + crowd-sniff (merged with original):
+Both browser-sniff + crowd-sniff (merged with original):
 
 ```bash
 printing-press generate \
   --spec <original-spec-path-or-url> \
-  --spec "$RESEARCH_DIR/<api>-sniff-spec.yaml" \
+  --spec "$RESEARCH_DIR/<api>-browser-sniff-spec.yaml" \
   --spec "$RESEARCH_DIR/<api>-crowd-spec.yaml" \
   --name <api> \
   --output "$CLI_WORK_DIR" \
@@ -1987,13 +1987,13 @@ cp -r "$RESEARCH_DIR" "$PRESS_MANUSCRIPTS/$API_SLUG/$RUN_ID/research" 2>/dev/nul
 cp -f "$API_RUN_DIR/research.json" "$PRESS_MANUSCRIPTS/$API_SLUG/$RUN_ID/research.json" 2>/dev/null || true
 cp -r "$PROOFS_DIR" "$PRESS_MANUSCRIPTS/$API_SLUG/$RUN_ID/proofs" 2>/dev/null || true
 
-# Archive discovery artifacts (sniff captures, URL lists, sniff report).
+# Archive discovery artifacts (browser-sniff captures, URL lists, browser-sniff report).
 # Remove session state before archiving — contains authentication cookies/tokens.
 rm -f "$DISCOVERY_DIR/session-state.json"
 
 # Strip response bodies from HAR before archiving to control size.
 if [ -d "$DISCOVERY_DIR" ]; then
-  for har in "$DISCOVERY_DIR"/sniff-capture.har "$DISCOVERY_DIR"/sniff-capture.json; do
+  for har in "$DISCOVERY_DIR"/browser-sniff-capture.har "$DISCOVERY_DIR"/browser-sniff-capture.json; do
     if [ -f "$har" ] && command -v jq >/dev/null 2>&1; then
       jq 'del(.log.entries[].response.content.text)' "$har" > "${har}.stripped" 2>/dev/null && mv "${har}.stripped" "$har" || rm -f "${har}.stripped"
     fi

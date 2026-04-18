@@ -1,4 +1,4 @@
-package websniff
+package browsersniff
 
 type HAR struct {
 	Log HARLog `json:"log"`

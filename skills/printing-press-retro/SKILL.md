@@ -371,7 +371,7 @@ Write the full retro document using this template:
 
 ## Session Stats
 - API: <name>
-- Spec source: <catalog/sniffed/docs/HAR>
+- Spec source: <catalog/browser-sniffed/docs/HAR>
 - Scorecard: <score>/100 (<grade>)
 - Verify pass rate: <X>%
 - Fix loops: <N>

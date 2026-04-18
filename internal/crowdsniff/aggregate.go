@@ -7,7 +7,7 @@ import (
 )
 
 var (
-	// Concrete value patterns (from websniff/classifier.go).
+	// Concrete value patterns (from browsersniff/classifier.go).
 	uuidSegmentPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 	hashSegmentPattern = regexp.MustCompile(`(?i)^[0-9a-f]{32,}$`)
 	numericPattern     = regexp.MustCompile(`^\d+$`)

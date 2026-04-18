@@ -1,31 +1,31 @@
-# Sniff Capture Implementation
+# Browser-Sniff Capture Implementation
 
 > **When to read:** This file is referenced by Phase 1.7 of the printing-press skill.
-> Read it when the user approves sniff (browser-use or agent-browser capture of live API traffic).
+> Read it when the user approves browser-sniff (browser-use or agent-browser capture of live API traffic).
 >
-> **Context:** This file documents what happens AFTER Phase 1.7 decides to sniff. The decision itself — approve, decline, or silent-skip — is recorded in `$PRESS_RUNSTATE/runs/$RUN_ID/sniff-gate.json` by Phase 1.7 before this reference is loaded. Phase 1.5 refuses to proceed without that marker file. See SKILL.md Phase 1.7 "Enforcement: the sniff-gate.json marker file" for the contract.
+> **Context:** This file documents what happens AFTER Phase 1.7 decides to browser-sniff. The decision itself — approve, decline, or silent-skip — is recorded in `$PRESS_RUNSTATE/runs/$RUN_ID/browser-browser-sniff-gate.json` by Phase 1.7 before this reference is loaded. Phase 1.5 refuses to proceed without that marker file. See SKILL.md Phase 1.7 "Enforcement: the browser-browser-sniff-gate.json marker file" for the contract.
 
 ### Cardinal Rules
 
-1. **ALWAYS use browser-use for capture.** Do NOT substitute curl probing, JS bundle grepping, or agent-browser auto-connect for a proper browser-use interactive sniff. Agent-browser is for session transfer only (grabbing cookies from a running Chrome). The capture — browsing pages, collecting URLs, intercepting requests — MUST use browser-use.
+1. **ALWAYS use browser-use for capture.** Do NOT substitute curl probing, JS bundle grepping, or agent-browser auto-connect for a proper browser-use interactive browser-sniff. Agent-browser is for session transfer only (grabbing cookies from a running Chrome). The capture — browsing pages, collecting URLs, intercepting requests — MUST use browser-use.
 
 2. **Do NOT skip auth discovery when the session expires.** *(Only applies when `AUTH_SESSION_AVAILABLE=true` — the user confirmed they're logged in.)* If a Chrome profile loads but the session has expired (login page visible instead of account page), offer headed login as a fallback. Never proceed without auth just because the profile session was stale. For anonymous sniffs (no auth context), this rule does not apply.
 
 3. **Use click-based SPA navigation after installing interceptors.** `browser-use open` triggers a full page reload which resets the JS context and destroys fetch/XHR interceptors. After installing interceptors, navigate by clicking links (`browser-use eval "document.querySelector('a[href*=account]').click()"` or `browser-use click`). Only use `browser-use open` for the first page load or when you need to re-install interceptors.
 
-### If user approves sniff
+### If user approves browser-sniff
 
-#### Sniff Pacing
+#### Browser-Sniff Pacing
 
-When making API calls during sniff (browser-use eval, fetch, or direct HTTP requests), apply adaptive pacing to avoid rate limits:
+When making API calls during browser-sniff (browser-use eval, fetch, or direct HTTP requests), apply adaptive pacing to avoid rate limits:
 
 1. **Start conservative**: Wait 1 second between API calls
 2. **Ramp up on success**: After 5 consecutive successful calls, reduce the delay by 20% (minimum 0.3 seconds)
 3. **Back off on 429**: If you get a rate-limited response (HTTP 429), immediately double the delay and log: "Rate limited — increasing delay to Xs"
 4. **Hard stop on repeated 429s**: If you hit 3 consecutive 429s, pause for 30 seconds before continuing
-5. **Never abort**: Rate limiting during sniff is recoverable. Always continue after the backoff — do not abort discovery due to rate limits
+5. **Never abort**: Rate limiting during browser-sniff is recoverable. Always continue after the backoff — do not abort discovery due to rate limits
 
-Track the current delay mentally. Report the effective rate when summarizing sniff results: "Sniffed N endpoints at ~X req/s effective rate."
+Track the current delay mentally. Report the effective rate when summarizing browser-sniff results: "Sniffed N endpoints at ~X req/s effective rate."
 
 #### Proxy Pattern Detection
 
@@ -71,13 +71,13 @@ fi
 
 If a tool is found, report: "Using **<tool>** for traffic capture (CLI-driven mode — no LLM key needed)." and proceed to Step 1c to verify compatibility.
 
-**Important:** browser-use has two modes: autonomous Agent mode (requires an LLM API key like ANTHROPIC_API_KEY) and CLI mode (open/eval/scroll — no key needed). **Always use CLI mode for sniff.** It is more reliable, version-stable, and does not require the user to provide an additional API key. Do NOT attempt to use browser-use's Python `Agent` class — it requires an LLM key that may not be available.
+**Important:** browser-use has two modes: autonomous Agent mode (requires an LLM API key like ANTHROPIC_API_KEY) and CLI mode (open/eval/scroll — no key needed). **Always use CLI mode for browser-sniff.** It is more reliable, version-stable, and does not require the user to provide an additional API key. Do NOT attempt to use browser-use's Python `Agent` class — it requires an LLM key that may not be available.
 
 #### Step 1b: Install capture tool (if none found)
 
 If neither tool is installed, offer to install via `AskUserQuestion`:
 
-> "No browser automation tool found. I need one to sniff the live site. Which would you like to install?"
+> "No browser automation tool found. I need one to browser-sniff the live site. Which would you like to install?"
 >
 > Options:
 > 1. **Install browser-use (Recommended)** — "CLI-driven browser automation. Claude drives the browsing via open/eval/scroll commands. Requires Python."
@@ -120,9 +120,9 @@ After install, re-run detection. If `agent-browser` is now available, set `SNIFF
 
 #### Step 1c: Verify capture tool compatibility
 
-After detection (Step 1) or installation (Step 1b), verify the installed version supports the CLI commands the sniff process needs.
+After detection (Step 1) or installation (Step 1b), verify the installed version supports the CLI commands the browser-sniff process needs.
 
-**For browser-use** — The CLI 2.0 commands (`open`, `eval`, `scroll`, `close`) all shipped in **v0.12.3**. Versions before that have an incomplete or experimental CLI that won't work for sniff.
+**For browser-use** — The CLI 2.0 commands (`open`, `eval`, `scroll`, `close`) all shipped in **v0.12.3**. Versions before that have an incomplete or experimental CLI that won't work for browser-sniff.
 
 ```bash
 # browser-use has no --version flag; get version from pip metadata
@@ -150,7 +150,7 @@ fi
 
 **If the selected tool fails the compatibility check**, offer to upgrade via `AskUserQuestion`:
 
-> "Found **<tool>** v<version>, but sniff requires v<min-version>+ for CLI capture commands. Would you like to upgrade?"
+> "Found **<tool>** v<version>, but browser-sniff requires v<min-version>+ for CLI capture commands. Would you like to upgrade?"
 >
 > Options:
 > 1. **Yes — upgrade <tool>** — runs the appropriate upgrade command (see below)
@@ -166,11 +166,11 @@ After upgrade, re-check the version. If the upgrade resolves the issue, proceed 
 
 **Do NOT upgrade automatically.** Always ask permission first — upgrading packages can have side effects on the user's environment.
 
-If the tool passes the version check, proceed to Step 1d (if authenticated sniff) or Step 2a/2b (if anonymous sniff).
+If the tool passes the version check, proceed to Step 1d (if authenticated browser-sniff) or Step 2a/2b (if anonymous browser-sniff).
 
-#### Step 1d: Session Transfer (authenticated sniff only)
+#### Step 1d: Session Transfer (authenticated browser-sniff only)
 
-This step only runs when the user chose "authenticated sniff" (from Phase 1.7's sniff-as-primary or sniff-as-enrichment prompts, or when `AUTH_SESSION_AVAILABLE=true` and the user confirmed).
+This step only runs when the user chose "authenticated browser-sniff" (from Phase 1.7's sniff-as-primary or sniff-as-enrichment prompts, or when `AUTH_SESSION_AVAILABLE=true` and the user confirmed).
 
 **Situation detection:**
 ```bash
@@ -183,10 +183,10 @@ fi
 **When Chrome IS running**, use agent-browser to grab cookies, then ask the user to quit Chrome so browser-use can load the profile for capture:
 
 Present via `AskUserQuestion`:
-> "Chrome is running. I'll grab your cookies, then need you to quit Chrome so I can sniff with full page access."
+> "Chrome is running. I'll grab your cookies, then need you to quit Chrome so I can browser-sniff with full page access."
 >
-> 1. **Grab session, then quit Chrome** (Recommended) — "I save your cookies via agent-browser, you quit Chrome, then I sniff with browser-use using your profile. Full DOM access."
-> 2. **Log in within a new browser window** — "I'll open a visible browser. You log in, then I sniff."
+> 1. **Grab session, then quit Chrome** (Recommended) — "I save your cookies via agent-browser, you quit Chrome, then I browser-sniff with browser-use using your profile. Full DOM access."
+> 2. **Log in within a new browser window** — "I'll open a visible browser. You log in, then I browser-sniff."
 > 3. **I'll export a HAR file** — "You browse the site in DevTools, export the HAR."
 
 For option 1 (save-then-restore):
@@ -217,7 +217,7 @@ Present via `AskUserQuestion`:
 > "Chrome isn't running. I can load your Chrome profile directly — all your saved logins will be available."
 >
 > 1. **Use your Chrome profile** (Recommended, requires browser-use) — "Loads your real Chrome profile. Zero setup."
-> 2. **Log in within a new browser window** — "I'll open a visible browser. You log in, then I sniff."
+> 2. **Log in within a new browser window** — "I'll open a visible browser. You log in, then I browser-sniff."
 > 3. **I'll export a HAR file**
 
 For option 1 (browser-use profile reuse):
@@ -269,10 +269,10 @@ fi
 
 If no target-domain cookies are found, present via `AskUserQuestion`:
 
-> "Session transfer failed — no `<target-domain>` cookies found in the browser. The sniff would run unauthenticated."
+> "Session transfer failed — no `<target-domain>` cookies found in the browser. The browser-sniff would run unauthenticated."
 >
-> 1. **Log in manually** — "I'll open a headed browser. You log in, then I sniff."
-> 2. **Continue without auth** — "Sniff only public endpoints"
+> 1. **Log in manually** — "I'll open a headed browser. You log in, then I browser-sniff."
+> 2. **Continue without auth** — "Browser-Sniff only public endpoints"
 > 3. **Provide HAR manually** — "Export a HAR yourself from browser DevTools"
 
 **After loading a Chrome profile**, also verify the session is actually active on the target site. Cookies may exist but be expired:
@@ -288,8 +288,8 @@ If the result is `SESSION_EXPIRED` (login link visible, no account link), the pr
 
 > "Your browser session for `<site>` has expired (login page visible). I need a fresh login to discover authenticated endpoints."
 >
-> 1. **Open headed browser to log in** (Recommended) — "I'll open a visible browser. You log in, then I continue the sniff."
-> 2. **Continue without auth** — "Sniff only public endpoints"
+> 1. **Open headed browser to log in** (Recommended) — "I'll open a visible browser. You log in, then I continue the browser-sniff."
+> 2. **Continue without auth** — "Browser-Sniff only public endpoints"
 
 Do NOT silently proceed without auth when the session has expired. The authenticated surface is often the most valuable part of the API (order history, rewards, saved data).
 
@@ -330,7 +330,7 @@ For XHR-based interceptor captures, the same pattern applies: install the interc
 
 **Step 2a.1: Build the user flow plan**
 
-From the primary sniff goal (Step 0 in the SKILL.md), derive the interactive steps a real user would take to accomplish that goal. This is NOT a list of pages to load -- it is a sequence of actions.
+From the primary browser-sniff goal (Step 0 in the SKILL.md), derive the interactive steps a real user would take to accomplish that goal. This is NOT a list of pages to load -- it is a sequence of actions.
 
 Example for "Order a pizza for delivery" (Domino's):
 1. Click "Delivery" on homepage
@@ -436,7 +436,7 @@ When the user confirmed a logged-in session (AUTH_SESSION_AVAILABLE=true from Ph
    - If no header found → try cookie replay
    This is what propagates `Auth.Type` and auth config into the spec.
 
-7. **If auth pages redirect to login.** The session may have expired between the time the user confirmed login and the sniff reaches this step. Report: "Auth pages redirected to login — session may have expired. Auth-only endpoints not discovered." Do NOT fail the sniff — the public endpoints are still valid. Proceed to Step 2a.2 with the public set only.
+7. **If auth pages redirect to login.** The session may have expired between the time the user confirmed login and the browser-sniff reaches this step. Report: "Auth pages redirected to login — session may have expired. Auth-only endpoints not discovered." Do NOT fail the browser-sniff — the public endpoints are still valid. Proceed to Step 2a.2 with the public set only.
 
 **SPA interaction rule:** On each page/state, take a snapshot first. Look for interactive elements (buttons, forms, dropdowns, tabs). Click through them. SPAs fire API calls on interaction, not on page load. If you load a page and see no XHR activity, that means you need to interact with the page, not that there is nothing to find.
 
@@ -465,10 +465,10 @@ SNIFF_URLS="$DISCOVERY_DIR/sniff-urls.txt"
 # For EACH target page (run this loop in foreground — do NOT use run_in_background):
 browser-use open "<target-page-url>"
 sleep 4  # Wait for initial page load API calls to complete
-# Apply sniff pacing delay (starting at 1s, adapts per Sniff Pacing rules above)
+# Apply browser-sniff pacing delay (starting at 1s, adapts per Browser-Sniff Pacing rules above)
 browser-use scroll down  # Trigger lazy-loaded content
 sleep 1
-# Apply sniff pacing delay before next eval call
+# Apply browser-sniff pacing delay before next eval call
 
 # Collect API URLs via Performance API (browser-native, no injection needed)
 browser-use eval "var e=performance.getEntriesByType('resource');var u=[];for(var i=0;i<e.length;i++){var n=e[i].name;if(n.indexOf('<api-domain-1>')>-1||n.indexOf('<api-domain-2>')>-1)u.push(n);}u.join('|||');"
@@ -530,11 +530,11 @@ After collecting URLs, check whether the site uses a GraphQL BFF pattern. This i
 
 **Step 2a.2.7: JS bundle endpoint extraction (supplementary)**
 
-SPA frameworks (Angular, React, Vue, Next.js) compile all API endpoint paths into their main JS bundle. Extracting these paths supplements the sniff with endpoints that no user flow visits (admin features, migration tools, rarely-used settings).
+SPA frameworks (Angular, React, Vue, Next.js) compile all API endpoint paths into their main JS bundle. Extracting these paths supplements the browser-sniff with endpoints that no user flow visits (admin features, migration tools, rarely-used settings).
 
-**When to run:** After completing the interactive sniff (Steps 2a.1–2a.2.5). This is supplementary — the sniff is primary because it provides response shapes, auth patterns, and parameter types. Bundle extraction only gives endpoint paths.
+**When to run:** After completing the interactive browser-sniff (Steps 2a.1–2a.2.5). This is supplementary — the browser-sniff is primary because it provides response shapes, auth patterns, and parameter types. Bundle extraction only gives endpoint paths.
 
-**Skip when:** The site is server-rendered HTML without JS bundles, or the sniff already discovered 20+ endpoints and the API surface appears complete.
+**Skip when:** The site is server-rendered HTML without JS bundles, or the browser-sniff already discovered 20+ endpoints and the API surface appears complete.
 
 1. **Find the main bundle:**
    ```bash
@@ -565,31 +565,31 @@ SPA frameworks (Angular, React, Vue, Next.js) compile all API endpoint paths int
    "
    ```
 
-3. **Merge with sniff results.** Append bundle-discovered endpoints to `$SNIFF_URLS`. Mark their provenance:
+3. **Merge with browser-sniff results.** Append bundle-discovered endpoints to `$SNIFF_URLS`. Mark their provenance:
    ```bash
    # Append bundle-only endpoints (not already in sniff-urls.txt)
    # In the discovery report, mark these as "discovered: bundle"
    ```
 
-4. **Record API config.** If the bundle reveals useful config (API version headers, auth token construction, rate limit hints), note them in the discovery report's Sniff Configuration section.
+4. **Record API config.** If the bundle reveals useful config (API version headers, auth token construction, rate limit hints), note them in the discovery report's Browser-Sniff Configuration section.
 
 **Step 2a.3: Deduplicate and normalize**
 
 After collecting from all pages:
 ```bash
 # Strip query parameters and deduplicate to find unique API path patterns
-cat "$SNIFF_URLS" | sed 's/\?.*//' | sort -u > "$DISCOVERY_DIR/sniff-unique-paths.txt"
+cat "$SNIFF_URLS" | sed 's/\?.*//' | sort -u > "$DISCOVERY_DIR/browser-sniff-unique-paths.txt"
 ```
 
 **Step 2a.4: Generate enriched capture**
 
-The Performance API gives us URLs but not response bodies. To feed `printing-press sniff`, we need to call each unique API endpoint and capture the response:
+The Performance API gives us URLs but not response bodies. To feed `printing-press browser-sniff`, we need to call each unique API endpoint and capture the response:
 
 ```bash
 # For each unique API URL, fetch it and build a simple capture file
-# printing-press sniff accepts HAR or enriched capture JSON
+# printing-press browser-sniff accepts HAR or enriched capture JSON
 # When fetching each unique API URL to build enriched capture:
-# Apply sniff pacing between requests (1s initial, adaptive per Sniff Pacing rules)
+# Apply browser-sniff pacing between requests (1s initial, adaptive per Browser-Sniff Pacing rules)
 # On 429: double delay, log, continue with remaining URLs
 ```
 
@@ -619,7 +619,7 @@ If browser-use is not available, use agent-browser with Claude driving the explo
      - Find the interactive element for this step (button, form, link, dropdown)
      - Click/fill/submit it
      - `agent-browser wait --network-idle` after each interaction
-     - Apply sniff pacing between interactions (1s initial, adaptive per Sniff Pacing rules)
+     - Apply browser-sniff pacing between interactions (1s initial, adaptive per Browser-Sniff Pacing rules)
    - After completing the primary flow, run 1-2 secondary flows
    - Skip: navigation links, footer links, social media buttons, cookie/consent banners
    - Fill forms with realistic sample data based on the domain (real-looking addresses, names, etc.)
@@ -631,14 +631,14 @@ If browser-use is not available, use agent-browser with Claude driving the explo
    For each API request (filter by JSON content-type, skip analytics domains):
    ```bash
    agent-browser network request <request-id> --json
-   # Apply sniff pacing between response body fetches
+   # Apply browser-sniff pacing between response body fetches
    # These are direct API calls and most likely to trigger rate limits
    ```
-   Combine HAR metadata + response bodies into an enriched capture JSON at `$DISCOVERY_DIR/sniff-capture.json`.
+   Combine HAR metadata + response bodies into an enriched capture JSON at `$DISCOVERY_DIR/browser-sniff-capture.json`.
 
 4. **Stop HAR recording**:
    ```bash
-   agent-browser network har stop "$DISCOVERY_DIR/sniff-capture.har"
+   agent-browser network har stop "$DISCOVERY_DIR/browser-sniff-capture.har"
    ```
 
 #### Step 2c: Thin-results safety check
@@ -649,15 +649,15 @@ After completing the primary user flow capture (browser-use or agent-browser), c
 
 2. **Re-sniff with interaction.** Go back to the page where results were thinnest. Take a snapshot. Find interactive elements. Click the most prominent one. Wait for network activity. Repeat for at least 3 interactions before accepting thin results.
 
-3. **Compare against known endpoints.** If Phase 1 research found community wrappers documenting N endpoints but the sniff found fewer than N/2, the sniff missed something. Community wrappers are a floor, not a ceiling -- they represent what someone else already reverse-engineered, often years ago. The real API surface is almost certainly larger.
+3. **Compare against known endpoints.** If Phase 1 research found community wrappers documenting N endpoints but the browser-sniff found fewer than N/2, the browser-sniff missed something. Community wrappers are a floor, not a ceiling -- they represent what someone else already reverse-engineered, often years ago. The real API surface is almost certainly larger.
 
-4. **Report the gap honestly.** If re-sniffing with interaction still produces thin results, report: "Sniff captured X endpoints but community wrappers document Y. The site may use WebSocket, protobuf, server-side rendering, or other techniques that resist browser capture." Do NOT conclude "the API has few endpoints" when the real answer may be "I didn't interact enough to trigger them."
+4. **Report the gap honestly.** If re-sniffing with interaction still produces thin results, report: "Browser-Sniff captured X endpoints but community wrappers document Y. The site may use WebSocket, protobuf, server-side rendering, or other techniques that resist browser capture." Do NOT conclude "the API has few endpoints" when the real answer may be "I didn't interact enough to trigger them."
 
 If the thin-results check triggers a re-sniff that discovers additional endpoints, merge the new captures with the originals before proceeding to Step 3.
 
-#### Step 2d: Cookie auth validation (authenticated sniff only)
+#### Step 2d: Cookie auth validation (authenticated browser-sniff only)
 
-**Skip this step if:** The sniff was anonymous (no session transfer in Step 1d), or the API uses API key / Bearer token auth rather than cookie-based session auth.
+**Skip this step if:** The browser-sniff was anonymous (no session transfer in Step 1d), or the API uses API key / Bearer token auth rather than cookie-based session auth.
 
 **Purpose:** Before promising `auth login --chrome` in the generated CLI, validate that browser cookies actually produce authenticated responses when replayed outside the browser context. Some APIs use CSRF tokens, SameSite cookie policies, or other mechanisms that prevent cookie-only replay.
 
@@ -689,61 +689,61 @@ If the thin-results check triggers a re-sniff that discovers additional endpoint
    | 401/403 | 401/403 | **Fail** — cookies don't replay (likely CSRF, SameSite, or IP binding). Warn the user and do not offer browser auth. |
    | Other | Any | **Inconclusive** — try a different test endpoint. If all attempts are inconclusive after 3 endpoints, treat as Fail. |
 
-5. **On Pass:** Proceed to Step 3. The sniff report (Step 5) should note: "Cookie auth validated — the generated CLI will support `auth login --chrome`."
+5. **On Pass:** Proceed to Step 3. The browser-sniff report (Step 5) should note: "Cookie auth validated — the generated CLI will support `auth login --chrome`."
 
 6. **On Fail:** Inform the user via the conversation:
    > "Authenticated endpoints were discovered, but cookie replay failed (likely CSRF tokens or strict cookie policies). The generated CLI will include these endpoints but won't offer `auth login --chrome`. You'll need to manually provide auth tokens via environment variables."
 
-   Set `Auth.Type = "none"` in the capture's auth section. Include the authenticated endpoints in the spec (they're still valid endpoints), but the CLI won't have a browser auth path. Note the failure reason in the sniff report.
+   Set `Auth.Type = "none"` in the capture's auth section. Include the authenticated endpoints in the spec (they're still valid endpoints), but the CLI won't have a browser auth path. Note the failure reason in the browser-sniff report.
 
 #### Step 3: Analyze capture
 
 Run websniff on the captured traffic:
 ```bash
-printing-press sniff --har "$DISCOVERY_DIR/sniff-capture.har" --name <api> --output "$RESEARCH_DIR/<api>-sniff-spec.yaml"
+printing-press browser-sniff --har "$DISCOVERY_DIR/browser-sniff-capture.har" --name <api> --output "$RESEARCH_DIR/<api>-browser-sniff-spec.yaml"
 ```
 
 If using agent-browser's enriched capture format instead:
 ```bash
-printing-press sniff --har "$DISCOVERY_DIR/sniff-capture.json" --name <api> --output "$RESEARCH_DIR/<api>-sniff-spec.yaml"
+printing-press browser-sniff --har "$DISCOVERY_DIR/browser-sniff-capture.json" --name <api> --output "$RESEARCH_DIR/<api>-browser-sniff-spec.yaml"
 ```
 
 #### Step 4: Report and update spec source
 
-Report: "Sniff discovered **N endpoints** across **M resources**. [X new endpoints not in the original spec.]"
+Report: "Browser-Sniff discovered **N endpoints** across **M resources**. [X new endpoints not in the original spec.]"
 
 Update the spec source for Phase 2:
 - **Enrichment mode**: Phase 2 will use `--spec <original> --spec <sniff-spec> --name <api>` to merge both
 - **Primary mode**: Phase 2 will use `--spec <sniff-spec>` directly
 
-#### Step 5: Write sniff discovery report
+#### Step 5: Write browser-sniff discovery report
 
-Write a structured sniff provenance report to `$DISCOVERY_DIR/sniff-report.md`. This report preserves the discovery evidence so a future maintainer can reproduce or extend the sniff.
+Write a structured browser-sniff provenance report to `$DISCOVERY_DIR/browser-sniff-report.md`. This report preserves the discovery evidence so a future maintainer can reproduce or extend the browser-sniff.
 
 The report must contain these sections:
 
-1. **User Goal Flow** — The primary sniff goal and each step attempted.
+1. **User Goal Flow** — The primary browser-sniff goal and each step attempted.
    - Goal: [e.g., "Order a pizza for delivery"]
    - Steps completed: [numbered list of steps taken, with which API operations each step triggered]
    - Steps skipped: [any steps that couldn't be completed, with reason]
    - Secondary flows attempted: [any additional workflows beyond the primary goal]
    - Coverage: [X of Y planned steps completed]
 
-2. **Pages & Interactions** — List every URL browsed and interaction performed during the sniff, in order. Include the page purpose and what was clicked/filled/submitted (e.g., "Homepage -- clicked 'Delivery' button", "Address modal -- entered '350 5th Ave', clicked 'Continue'").
+2. **Pages & Interactions** — List every URL browsed and interaction performed during the browser-sniff, in order. Include the page purpose and what was clicked/filled/submitted (e.g., "Homepage -- clicked 'Delivery' button", "Address modal -- entered '350 5th Ave', clicked 'Continue'").
 
-3. **Sniff Configuration** — Backend used (browser-use, agent-browser, or manual HAR), pacing settings (initial delay, final effective rate), and proxy pattern detection result (proxy-envelope detected / not detected, with the proxy URL if applicable).
+3. **Browser-Sniff Configuration** — Backend used (browser-use, agent-browser, or manual HAR), pacing settings (initial delay, final effective rate), and proxy pattern detection result (proxy-envelope detected / not detected, with the proxy URL if applicable).
 
 4. **Endpoints Discovered** — A markdown table with columns: Method, Path, Status Code, Content-Type, Auth. One row per unique endpoint observed. The Auth column is "public" or "auth-required" (based on Step 2a.1.5 classification). If no authenticated flow was run, omit the Auth column.
 
-5. **Coverage Analysis** — What resource types were exercised (e.g., "collections, workspaces, teams, categories") and what was likely missed. Compare against the Phase 1 research brief to identify gaps (e.g., "Brief mentions 'flows' but no flow endpoints were discovered during sniff").
+5. **Coverage Analysis** — What resource types were exercised (e.g., "collections, workspaces, teams, categories") and what was likely missed. Compare against the Phase 1 research brief to identify gaps (e.g., "Brief mentions 'flows' but no flow endpoints were discovered during browser-sniff").
 
 6. **Response Samples** — For each unique response shape (keyed by status code + content-type category), include a truncated sample:
    - JSON/text responses: first 2KB or 100 lines, whichever is smaller
    - Binary responses (images, protobuf, etc.): skip content, include a metadata note: `Binary response: <content-type>, <size> bytes`
    - Aim for one sample per unique shape, not one per endpoint
 
-7. **Rate Limiting Events** — Any 429 responses encountered, delays applied, and effective sniff rate achieved (e.g., "Sniffed 7 endpoints at ~1.5 req/s effective rate, one 429 at request #4").
+7. **Rate Limiting Events** — Any 429 responses encountered, delays applied, and effective browser-sniff rate achieved (e.g., "Sniffed 7 endpoints at ~1.5 req/s effective rate, one 429 at request #4").
 
-8. **Authentication Context** — Whether the sniff used an authenticated session. If yes: transfer method used (auto-connect / profile / headed login / HAR), which endpoints were only reachable with auth (e.g., "order history, saved addresses, rewards required login"), the auth header scheme discovered (e.g., "Authorization: PagliacciAuth {customerId}|{authToken}", "Bearer token from localStorage"), and confirmation that session state was excluded from manuscript archiving. If no: "No authenticated session used."
+8. **Authentication Context** — Whether the browser-sniff used an authenticated session. If yes: transfer method used (auto-connect / profile / headed login / HAR), which endpoints were only reachable with auth (e.g., "order history, saved addresses, rewards required login"), the auth header scheme discovered (e.g., "Authorization: PagliacciAuth {customerId}|{authToken}", "Bearer token from localStorage"), and confirmation that session state was excluded from manuscript archiving. If no: "No authenticated session used."
 
-9. **Bundle Extraction** — If JS bundle extraction ran (Step 2a.2.7), list: the bundle URL analyzed, the API base URL discovered, endpoints found only in the bundle (not during interactive sniff), and any API config extracted (version headers, auth construction patterns). If bundle extraction did not run, omit this section.
+9. **Bundle Extraction** — If JS bundle extraction ran (Step 2a.2.7), list: the bundle URL analyzed, the API base URL discovered, endpoints found only in the bundle (not during interactive browser-sniff), and any API config extracted (version headers, auth construction patterns). If bundle extraction did not run, omit this section.

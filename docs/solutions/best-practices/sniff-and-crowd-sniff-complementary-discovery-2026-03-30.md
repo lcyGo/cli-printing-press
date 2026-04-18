@@ -1,5 +1,5 @@
 ---
-title: "Sniff and Crowd-Sniff: Complementary API Discovery for CLI Generation"
+title: "Browser-Sniff and Crowd-Sniff: Complementary API Discovery for CLI Generation"
 date: 2026-03-30
 category: best-practices
 module: API discovery pipeline
@@ -8,21 +8,21 @@ component: tooling
 severity: medium
 applies_when:
   - Generating a CLI for an API that lacks a published OpenAPI spec
-  - Deciding whether to use sniff, crowd-sniff, or both during Phase 1
+  - Deciding whether to use browser-sniff, crowd-sniff, or both during Phase 1
   - Evaluating which discovery method produces better CLI coverage
 tags:
   - api-discovery
-  - sniff
+  - browser-sniff
   - crowd-sniff
   - pipeline-strategy
   - spec-generation
 ---
 
-# Sniff and Crowd-Sniff: Complementary API Discovery for CLI Generation
+# Browser-Sniff and Crowd-Sniff: Complementary API Discovery for CLI Generation
 
 ## Context
 
-Printing-press generates CLIs from API specs. Many public APIs don't publish specs. Two discovery commands fill this gap — `sniff` (Phase 1.7) and `crowd-sniff` (Phase 1.8) — but they discover fundamentally different things and work best together.
+Printing-press generates CLIs from API specs. Many public APIs don't publish specs. Two discovery commands fill this gap — `browser-sniff` (Phase 1.7) and `crowd-sniff` (Phase 1.8) — but they discover fundamentally different things and work best together.
 
 Understanding when to use each, and why they're complementary rather than competing, is essential for producing the best CLI coverage.
 
@@ -30,13 +30,13 @@ Understanding when to use each, and why they're complementary rather than compet
 
 ### What each discovers
 
-**Sniff** browses a live web app headlessly, captures HTTP traffic, and reverse-engineers a spec from observed requests/responses. It sees what the web application does.
+**Browser-Sniff** browses a live web app headlessly, captures HTTP traffic, and reverse-engineers a spec from observed requests/responses. It sees what the web application does.
 
 **Crowd-sniff** searches npm SDKs and GitHub code to find what developers have already mapped. It sees what developers need.
 
 These are different sets:
 
-| Signal | Sniff | Crowd-sniff |
+| Signal | Browser-Sniff | Crowd-sniff |
 |--------|-------|-------------|
 | Source | One browsing session | Thousands of developers |
 | What it finds | What the web app does | What developers need |
@@ -49,14 +49,14 @@ These are different sets:
 
 ### When to use each
 
-**Use sniff alone** when:
+**Use browser-sniff alone** when:
 - The API has no SDKs on npm (rare for popular APIs)
 - The web app is the primary interface and you want to capture exactly what it does
 - You need response body examples for richer spec generation
 
 **Use crowd-sniff alone** when:
 - Browser automation isn't available or is unreliable
-- The API requires login (sniff skips auth-required sites)
+- The API requires login (browser-sniff skips auth-required sites)
 - Speed matters (crowd-sniff runs without a browser, typically 2-4 minutes)
 - You want popularity-weighted endpoint coverage
 
@@ -68,10 +68,10 @@ These are different sets:
 ### How they combine in the pipeline
 
 ```
-Phase 1.7: Sniff Gate
+Phase 1.7: Browser-Sniff Gate
   → Produces sniff-spec.yaml (endpoints from live traffic)
 
-Phase 1.8: Crowd Sniff Gate
+Phase 1.8: Crowd-Sniff Gate
   → Produces crowd-spec.yaml (endpoints from npm + GitHub)
 
 Phase 2: Generate
@@ -92,41 +92,41 @@ A spec treats all endpoints equally. Crowd-sniff doesn't — an endpoint found i
 
 For any API popular enough to want a CLI for, someone has already mapped it in code. An npm SDK has every endpoint the vendor tested and ships. GitHub code from hundreds of repos shows real-world usage patterns. Crowd-sniff turns this existing community knowledge into a structured spec — no browsing, no traffic capture, no manual documentation.
 
-Sniff captures the API's behavior. Crowd-sniff captures the community's intent. Together they produce the most complete picture available.
+Browser-Sniff captures the API's behavior. Crowd-sniff captures the community's intent. Together they produce the most complete picture available.
 
 ## Why This Matters
 
-Without sniff or crowd-sniff, an API without a published spec is a dead end for CLI generation. With both, printing-press can generate a CLI for virtually any public REST API — the two discovery methods close the gap between "APIs that document themselves" and "APIs that don't."
+Without browser-sniff or crowd-sniff, an API without a published spec is a dead end for CLI generation. With both, printing-press can generate a CLI for virtually any public REST API — the two discovery methods close the gap between "APIs that document themselves" and "APIs that don't."
 
 The complementary nature also improves quality beyond coverage:
-- Sniff provides response body examples that crowd-sniff can't (it only finds paths and methods)
-- Crowd-sniff provides auth patterns that sniff can't (web apps use cookies; SDKs use API keys)
-- Cross-source agreement (an endpoint found by both sniff and crowd-sniff) is a strong confidence signal
+- Browser-Sniff provides response body examples that crowd-sniff can't (it only finds paths and methods)
+- Crowd-sniff provides auth patterns that browser-sniff can't (web apps use cookies; SDKs use API keys)
+- Cross-source agreement (an endpoint found by both browser-sniff and crowd-sniff) is a strong confidence signal
 
 ## When to Apply
 
 - Every time you run the printing-press skill for an API without a published spec
 - When evaluating whether a generated CLI has sufficient endpoint coverage
-- When the skill asks whether to run sniff or crowd-sniff — the answer is usually "both"
+- When the skill asks whether to run browser-sniff or crowd-sniff — the answer is usually "both"
 - When adding new discovery methods to the pipeline (they should be complementary, not replacing)
 
 ## Examples
 
 ### API with published spec + SDK (e.g., Notion)
 
-Crowd-sniff's `@notionhq/client` SDK produces endpoints that closely match the official spec. Sniff captures the web app's internal API calls (some of which use different paths or additional endpoints not in the public API). Using both reveals the gap between the public API and the internal API.
+Crowd-sniff's `@notionhq/client` SDK produces endpoints that closely match the official spec. Browser-Sniff captures the web app's internal API calls (some of which use different paths or additional endpoints not in the public API). Using both reveals the gap between the public API and the internal API.
 
 ### API with no spec, no SDK (e.g., obscure SaaS)
 
-Sniff is the primary discovery method — browse the web app and capture what it does. Crowd-sniff may find GitHub code snippets from users calling the API directly, but coverage will be thinner. The skill falls back to `--docs` generation if neither produces results.
+Browser-Sniff is the primary discovery method — browse the web app and capture what it does. Crowd-sniff may find GitHub code snippets from users calling the API directly, but coverage will be thinner. The skill falls back to `--docs` generation if neither produces results.
 
 ### API with SDKs but no web app (e.g., infrastructure APIs)
 
-Crowd-sniff is the primary method — the SDK maps the entire API surface. Sniff has nothing to browse. This is where crowd-sniff's value is most clear: it turns published SDK code into a CLI spec without any human intervention.
+Crowd-sniff is the primary method — the SDK maps the entire API surface. Browser-Sniff has nothing to browse. This is where crowd-sniff's value is most clear: it turns published SDK code into a CLI spec without any human intervention.
 
 ## Related
 
 - `docs/solutions/best-practices/multi-source-api-discovery-design-2026-03-30.md` — technical design patterns used in crowd-sniff (testable HTTP clients, errgroup, path normalization, tarball security)
-- `docs/solutions/best-practices/adaptive-rate-limiting-sniffed-apis.md` — rate limiting for CLIs generated from sniffed specs
+- `docs/solutions/best-practices/adaptive-rate-limiting-sniffed-apis.md` — rate limiting for CLIs generated from browser-sniffed specs
 - `docs/brainstorms/2026-03-29-crowd-sniff-requirements.md` — origin requirements document
 - `docs/plans/2026-03-29-003-feat-crowd-sniff-plan.md` — implementation plan

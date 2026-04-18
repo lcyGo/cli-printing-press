@@ -13,7 +13,7 @@ Claude Code, Codex, Gemini CLI, Cursor - they call CLIs thousands of times a day
 /printing-press emboss notion                        # Second pass: improve an existing CLI
 ```
 
-One command. Lean loop. Produces a Go CLI + MCP server that absorbs every feature from every competing tool, then transcends with compound use cases only possible with local data. REST, GraphQL, or sniffed traffic - no OpenAPI spec required.
+One command. Lean loop. Produces a Go CLI + MCP server that absorbs every feature from every competing tool, then transcends with compound use cases only possible with local data. REST, GraphQL, or browser-sniffed traffic - no OpenAPI spec required.
 
 ### Get it
 
@@ -162,14 +162,14 @@ The fast path is a lean loop. Artifacts still matter, but only when they directl
 Phase 0     Resolve + Reuse           (1-3 min)    Reuse research, detect tokens, resolve spec or URL
 Phase 1     Research Brief            (5-10 min)   API identity, competitors, data layer, product thesis
 Phase 1.5   Ecosystem Absorb Gate    (5-10 min)   Catalog every MCP/skill/CLI feature → absorb manifest + novel suggestions
-Phase 1.7   Sniff Gate (if needed)   (2-5 min)    Browser capture, HAR import, discovery provenance
+Phase 1.7   Browser-Sniff Gate          (2-5 min)    Browser capture, HAR import, discovery provenance
 Phase 2     Generate                  (1-2 min)    Go CLI + MCP server from spec with validation
 Phase 3     Build The GOAT            (10-20 min)  ALL absorbed features + transcendence commands
 Phase 4     Shipcheck                 (3-8 min)    Dogfood + verify --fix + scorecard as one verification block
 Phase 5     Live Smoke (optional)     (2-5 min)    Read-only API smoke + data-flow check
 ```
 
-**Three entry paths.** Got an OpenAPI spec? Use `--spec`. Got a URL to a website with no docs? The sniff gate launches a browser, captures traffic, and generates the spec. Got a HAR file from DevTools? Pass `--har`. The press handles all three.
+**Three entry paths.** Got an OpenAPI spec? Use `--spec`. Got a URL to a website with no docs? The browser-sniff gate launches a browser, captures traffic, and generates the spec. Got a HAR file from DevTools? Pass `--har`. The press handles all three.
 
 **18 APIs in the catalog.** Asana, DigitalOcean, Discord, Front, GitHub, HubSpot, LaunchDarkly, Pipedrive, Plaid, Postman, SendGrid, Sentry, Square, Stripe, Stytch, Telegram, Twilio - plus Petstore for testing. Each pre-verified with spec URL, auth type, and category.
 
@@ -218,9 +218,9 @@ Already generated a CLI? Emboss runs a focused improvement cycle: audit baseline
 
 **Source credits**: the generated README includes a "Sources & Inspiration" section crediting the ecosystem tools and competing projects studied during research.
 
-**Proxy-envelope support**: for APIs that wrap all requests in a POST envelope (like Postman's `_api/ws/proxy`), the press detects the pattern during sniffing and generates a specialized client.
+**Proxy-envelope support**: for APIs that wrap all requests in a POST envelope (like Postman's `_api/ws/proxy`), the press detects the pattern during browser-sniffing and generates a specialized client.
 
-**Adaptive rate limiting**: sniffed APIs get conservative pacing - start slow, ramp up on success, back off on 429s. Never aborts, always recovers.
+**Adaptive rate limiting**: APIs discovered by browser-sniff get conservative pacing - start slow, ramp up on success, back off on 429s. Never aborts, always recovers.
 
 **Tests**: minimum 1 test file per package (store, cli). Table-driven tests for data layer queries and workflow commands.
 

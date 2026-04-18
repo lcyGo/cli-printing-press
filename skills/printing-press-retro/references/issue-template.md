@@ -27,7 +27,7 @@ retro — not the full retro document. The full retro is linked via catbox artif
 | Metric | Value |
 |--------|-------|
 | API | <api-display-name> |
-| Spec source | <catalog / sniffed / docs / HAR> |
+| Spec source | <catalog / browser-sniffed / docs / HAR> |
 | Scorecard | <score>/100 (<grade>) |
 | Verify pass rate | <X>% |
 | Fix loops | <N> |

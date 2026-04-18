@@ -1,4 +1,4 @@
-package websniff
+package browsersniff
 
 import (
 	"encoding/json"

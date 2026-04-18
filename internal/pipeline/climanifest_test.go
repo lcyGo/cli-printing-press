@@ -492,8 +492,8 @@ func TestArchiveRunArtifactsCopiesDiscovery(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(state.ResearchDir(), "brief.md"), []byte("brief"), 0o644))
 
 	require.NoError(t, os.MkdirAll(state.DiscoveryDir(), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(state.DiscoveryDir(), "sniff-report.md"), []byte("report"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(state.DiscoveryDir(), "sniff-unique-paths.txt"), []byte("/api/v1\n/api/v2"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(state.DiscoveryDir(), "browser-sniff-report.md"), []byte("report"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(state.DiscoveryDir(), "browser-sniff-unique-paths.txt"), []byte("/api/v1\n/api/v2"), 0o644))
 
 	archiveDir, err := ArchiveRunArtifacts(state)
 	require.NoError(t, err)
@@ -502,10 +502,10 @@ func TestArchiveRunArtifactsCopiesDiscovery(t *testing.T) {
 	// Verify discovery/ was copied
 	archivedDiscovery := ArchivedDiscoveryDir(state.APIName, state.RunID)
 	assert.DirExists(t, archivedDiscovery)
-	report, err := os.ReadFile(filepath.Join(archivedDiscovery, "sniff-report.md"))
+	report, err := os.ReadFile(filepath.Join(archivedDiscovery, "browser-sniff-report.md"))
 	require.NoError(t, err)
 	assert.Equal(t, "report", string(report))
-	paths, err := os.ReadFile(filepath.Join(archivedDiscovery, "sniff-unique-paths.txt"))
+	paths, err := os.ReadFile(filepath.Join(archivedDiscovery, "browser-sniff-unique-paths.txt"))
 	require.NoError(t, err)
 	assert.Equal(t, "/api/v1\n/api/v2", string(paths))
 

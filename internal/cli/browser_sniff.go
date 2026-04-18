@@ -5,11 +5,11 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/mvanhorn/cli-printing-press/internal/websniff"
+	"github.com/mvanhorn/cli-printing-press/internal/browsersniff"
 	"github.com/spf13/cobra"
 )
 
-func newSniffCmd() *cobra.Command {
+func newBrowserSniffCmd() *cobra.Command {
 	var harPath string
 	var outputPath string
 	var name string
@@ -17,18 +17,18 @@ func newSniffCmd() *cobra.Command {
 	var authFrom string
 
 	cmd := &cobra.Command{
-		Use:   "sniff",
+		Use:   "browser-sniff",
 		Short: "Analyze captured web traffic to discover API endpoints and generate a spec",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			websniff.SetAdditionalBlocklist(splitCSV(blocklist))
+			browsersniff.SetAdditionalBlocklist(splitCSV(blocklist))
 
-			capture, err := websniff.LoadCapture(harPath)
+			capture, err := browsersniff.LoadCapture(harPath)
 			if err != nil {
 				return fmt.Errorf("loading capture: %w", err)
 			}
 
 			if authFrom != "" {
-				authCapture, err := websniff.ParseEnriched(authFrom)
+				authCapture, err := browsersniff.ParseEnriched(authFrom)
 				if err != nil {
 					return fmt.Errorf("reading auth capture: %w", err)
 				}
@@ -38,7 +38,7 @@ func newSniffCmd() *cobra.Command {
 				capture.Auth = authCapture.Auth
 			}
 
-			apiSpec, err := websniff.AnalyzeCapture(capture)
+			apiSpec, err := browsersniff.AnalyzeCapture(capture)
 			if err != nil {
 				return fmt.Errorf("analyzing capture: %w", err)
 			}
@@ -49,10 +49,10 @@ func newSniffCmd() *cobra.Command {
 			}
 
 			if outputPath == "" {
-				outputPath = websniff.DefaultCachePath(apiSpec.Name)
+				outputPath = browsersniff.DefaultCachePath(apiSpec.Name)
 			}
 
-			if err := websniff.WriteSpec(apiSpec, outputPath); err != nil {
+			if err := browsersniff.WriteSpec(apiSpec, outputPath); err != nil {
 				return fmt.Errorf("writing spec: %w", err)
 			}
 
@@ -95,7 +95,7 @@ func splitCSV(value string) []string {
 	return out
 }
 
-func validateAuthDomainBinding(authCapture *websniff.EnrichedCapture, targetCapture *websniff.EnrichedCapture) error {
+func validateAuthDomainBinding(authCapture *browsersniff.EnrichedCapture, targetCapture *browsersniff.EnrichedCapture) error {
 	if authCapture == nil || authCapture.Auth == nil || strings.TrimSpace(authCapture.Auth.BoundDomain) == "" {
 		return nil
 	}
@@ -112,7 +112,7 @@ func validateAuthDomainBinding(authCapture *websniff.EnrichedCapture, targetCapt
 	return fmt.Errorf("auth captured for %s cannot be used with %s (domain mismatch)", authCapture.Auth.BoundDomain, targetDomain)
 }
 
-func captureDomain(capture *websniff.EnrichedCapture) string {
+func captureDomain(capture *browsersniff.EnrichedCapture) string {
 	if capture == nil {
 		return ""
 	}
@@ -133,7 +133,7 @@ func captureDomain(capture *websniff.EnrichedCapture) string {
 	return normalizeDomain(parsed.Hostname())
 }
 
-func commonCaptureBaseURL(capture *websniff.EnrichedCapture) string {
+func commonCaptureBaseURL(capture *browsersniff.EnrichedCapture) string {
 	counts := make(map[string]int)
 	best := ""
 	bestCount := 0

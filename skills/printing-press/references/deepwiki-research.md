@@ -115,7 +115,7 @@ Backing" scoring dimension (0-2 points). Combined with another source (e.g.,
 community issues, competitor tool analysis), it can push a feature to the
 maximum 2/2 Research Backing score.
 
-### Pre-Sniff Auth Intelligence (Phase 1.6)
+### Pre-Browser-Sniff Auth Intelligence (Phase 1.6)
 
 DeepWiki auth findings directly feed into Phase 1.6's auth profile classification.
 If DeepWiki reveals the token format (e.g., `tr_dev_` prefix for Trigger.dev,
