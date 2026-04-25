@@ -51,6 +51,24 @@ func new{{camel .PromotedName}}PromotedCmd(flags *rootFlags) *cobra.Command {
 			}
 {{- end}}
 {{- end}}
+{{- range .Endpoint.Params}}
+{{- if and (not .Positional) (jsonStringParam .)}}
+{{- $param := .}}
+			if cmd.Flags().Changed("{{flagName $param.Name}}") {
+				var parsed{{camel $param.Name}} any
+				if err := json.Unmarshal([]byte(flag{{camel $param.Name}}), &parsed{{camel $param.Name}}); err != nil {
+{{- with jsonEnumSuggestion $param $.Endpoint.Params}}
+					for _, v := range []string{ {{enumLiteral .Values}} } {
+						if flag{{camel $param.Name}} == v {
+							return fmt.Errorf("--{{flagName $param.Name}} must be valid JSON. Did you mean --{{.FlagName}} %s?", flag{{camel $param.Name}})
+						}
+					}
+{{- end}}
+					return fmt.Errorf("--{{flagName $param.Name}} must be valid JSON: %w", err)
+				}
+			}
+{{- end}}
+{{- end}}
 			c, err := flags.newClient()
 			if err != nil {
 				return err

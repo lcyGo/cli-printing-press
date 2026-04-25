@@ -247,8 +247,10 @@ func New(s *spec.APISpec, outputDir string) *Generator {
 			}
 			return " (one of: " + strings.Join(values, ", ") + ")"
 		},
-		"envName":  func(s string) string { return strings.ToUpper(strings.ReplaceAll(s, "-", "_")) },
-		"safeName": safeSQLName,
+		"jsonStringParam":    isJSONStringParam,
+		"jsonEnumSuggestion": jsonEnumSuggestion,
+		"envName":            func(s string) string { return strings.ToUpper(strings.ReplaceAll(s, "-", "_")) },
+		"safeName":           safeSQLName,
 		"hasDomainUpsert": func(name string) bool {
 			return domainUpsertMethodName(name) != "UpsertBatch"
 		},
@@ -1889,6 +1891,84 @@ func defaultValForParam(p spec.Param) string {
 		return `""`
 	}
 	return defaultVal(p)
+}
+
+type jsonFlagSuggestion struct {
+	FlagName string
+	Values   []string
+}
+
+func isJSONStringParam(p spec.Param) bool {
+	if p.Type != "string" {
+		return false
+	}
+
+	format := strings.ToLower(strings.TrimSpace(p.Format))
+	switch format {
+	case "json", "application/json":
+		return true
+	}
+
+	description := strings.TrimSpace(p.Description)
+	if strings.HasPrefix(description, "{") || strings.HasPrefix(description, "[") {
+		return true
+	}
+	lowerDescription := strings.ToLower(description)
+	jsonDescriptionMarkers := []string{
+		"as json",
+		"json:",
+		"json object",
+		"json array",
+		"json value",
+		"valid json",
+		"json-encoded",
+		"json encoded",
+		"json-formatted",
+		"json formatted",
+		"serialized json",
+	}
+	for _, marker := range jsonDescriptionMarkers {
+		if strings.Contains(lowerDescription, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func jsonEnumSuggestion(p spec.Param, params []spec.Param) *jsonFlagSuggestion {
+	for _, other := range params {
+		if other.Name == p.Name || other.Positional || other.Type != "string" || len(other.Enum) == 0 {
+			continue
+		}
+		if !isRelatedJSONPresetParam(p, other) {
+			continue
+		}
+		return &jsonFlagSuggestion{
+			FlagName: flagName(other.Name),
+			Values:   other.Enum,
+		}
+	}
+	return nil
+}
+
+func isRelatedJSONPresetParam(jsonParam, enumParam spec.Param) bool {
+	jsonText := strings.ToLower(jsonParam.Name + " " + jsonParam.Description)
+	enumText := strings.ToLower(enumParam.Name + " " + enumParam.Description)
+
+	if !strings.Contains(enumText, "preset") {
+		return false
+	}
+
+	return hasTemporalMarker(jsonText) && hasTemporalMarker(enumText)
+}
+
+func hasTemporalMarker(s string) bool {
+	for _, marker := range []string{"time", "date", "range", "window"} {
+		if strings.Contains(s, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func defaultVal(p spec.Param) string {
