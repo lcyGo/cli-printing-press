@@ -641,11 +641,20 @@ func inferTrafficAnalysisPath(specFiles []string, specSource string) string {
 }
 
 func readSpec(specFile string, refresh bool, skipCache bool) ([]byte, error) {
+	var data []byte
+	var err error
 	if strings.HasPrefix(specFile, "http://") || strings.HasPrefix(specFile, "https://") {
-		return fetchOrCacheSpec(specFile, refresh, skipCache)
+		data, err = fetchOrCacheSpec(specFile, refresh, skipCache)
+	} else {
+		data, err = os.ReadFile(specFile)
 	}
-
-	return os.ReadFile(specFile)
+	if err != nil {
+		return nil, err
+	}
+	if rejectErr := rejectIfNotSpec(data); rejectErr != nil {
+		return nil, rejectErr
+	}
+	return data, nil
 }
 
 func mergeSpecs(specs []*spec.APISpec, name string) *spec.APISpec {
