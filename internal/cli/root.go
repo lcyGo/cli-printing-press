@@ -176,7 +176,7 @@ func newGenerateCmd() *cobra.Command {
 
 				enrichSpecFromCatalog(parsed)
 				gen := generator.New(parsed, absOut)
-				loadResearchSources(gen, researchDir)
+				novelFeatures := loadResearchSources(gen, researchDir)
 				trafficAnalysis, err := loadTrafficAnalysisForGenerate(trafficAnalysisPath, nil, parsed.SpecSource)
 				if err != nil {
 					return &ExitError{Code: ExitInputError, Err: err}
@@ -212,10 +212,11 @@ func newGenerateCmd() *cobra.Command {
 				}
 
 				if err := pipeline.WriteManifestForGenerate(pipeline.GenerateManifestParams{
-					APIName:   parsed.Name,
-					DocsURL:   docsURL,
-					OutputDir: absOut,
-					Spec:      parsed,
+					APIName:       parsed.Name,
+					DocsURL:       docsURL,
+					OutputDir:     absOut,
+					Spec:          parsed,
+					NovelFeatures: novelFeatures,
 				}); err != nil {
 					fmt.Fprintf(os.Stderr, "warning: could not write manifest: %v\n", err)
 				}
@@ -384,7 +385,7 @@ func newGenerateCmd() *cobra.Command {
 
 			enrichSpecFromCatalog(apiSpec)
 			gen := generator.New(apiSpec, absOut)
-			loadResearchSources(gen, researchDir)
+			novelFeatures := loadResearchSources(gen, researchDir)
 			trafficAnalysis, err := loadTrafficAnalysisForGenerate(trafficAnalysisPath, specFiles, apiSpec.SpecSource)
 			if err != nil {
 				return &ExitError{Code: ExitInputError, Err: err}
@@ -440,11 +441,12 @@ func newGenerateCmd() *cobra.Command {
 			}
 
 			if err := pipeline.WriteManifestForGenerate(pipeline.GenerateManifestParams{
-				APIName:   apiSpec.Name,
-				SpecSrcs:  specFiles,
-				SpecURL:   specURL,
-				OutputDir: absOut,
-				Spec:      apiSpec,
+				APIName:       apiSpec.Name,
+				SpecSrcs:      specFiles,
+				SpecURL:       specURL,
+				OutputDir:     absOut,
+				Spec:          apiSpec,
+				NovelFeatures: novelFeatures,
 			}); err != nil {
 				fmt.Fprintf(os.Stderr, "warning: could not write manifest: %v\n", err)
 			}
@@ -984,12 +986,15 @@ func printDryRun(apiSpec *spec.APISpec, absOut string, specFiles []string) error
 }
 
 // loadResearchSources populates the generator's Sources, DiscoveryPages, and
-// NovelFeatures from a pipeline research directory. Silently skips if
-// researchDir is empty or data is unavailable.
-func loadResearchSources(gen *generator.Generator, researchDir string) {
+// NovelFeatures from a pipeline research directory. It returns only dogfood-
+// verified novel features in manifest form so publish validation cannot be
+// satisfied by planned-but-unbuilt absorb ideas. Silently skips if researchDir
+// is empty or data is unavailable.
+func loadResearchSources(gen *generator.Generator, researchDir string) []pipeline.NovelFeatureManifest {
 	if researchDir == "" {
-		return
+		return nil
 	}
+	var manifestNovel []pipeline.NovelFeatureManifest
 	research, err := pipeline.LoadResearch(researchDir)
 	if err == nil {
 		for _, s := range pipeline.SourcesForREADME(research) {
@@ -1022,12 +1027,22 @@ func loadResearchSources(gen *generator.Generator, researchDir string) {
 				Group:        nf.Group,
 			})
 		}
+		if research.NovelFeaturesBuilt != nil {
+			for _, nf := range *research.NovelFeaturesBuilt {
+				manifestNovel = append(manifestNovel, pipeline.NovelFeatureManifest{
+					Name:        nf.Name,
+					Command:     nf.Command,
+					Description: nf.Description,
+				})
+			}
+		}
 		if research.Narrative != nil {
 			gen.Narrative = translateNarrative(research.Narrative)
 		}
 	}
 	discoveryDir := filepath.Join(researchDir, "discovery")
 	gen.DiscoveryPages = pipeline.ParseDiscoveryPages(discoveryDir)
+	return manifestNovel
 }
 
 // translateNarrative copies an absorb-phase pipeline.ReadmeNarrative into

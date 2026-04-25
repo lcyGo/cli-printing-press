@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"encoding/json"
 	"go/parser"
 	"go/token"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/mvanhorn/cli-printing-press/internal/pipeline"
 	"github.com/mvanhorn/cli-printing-press/internal/spec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -90,6 +92,142 @@ resources:
 	assert.Contains(t, string(agentContext), `requires_browser_auth`)
 	_, err = parser.ParseFile(token.NewFileSet(), "agent_context.go", agentContext, parser.ParseComments)
 	require.NoError(t, err)
+}
+
+func TestGenerateCmdDoesNotCarryPlannedNovelFeaturesIntoManifest(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	specPath := filepath.Join(dir, "spec.yaml")
+	researchDir := filepath.Join(dir, "research")
+	outputDir := filepath.Join(dir, "novelapp")
+	require.NoError(t, os.MkdirAll(researchDir, 0o755))
+
+	require.NoError(t, os.WriteFile(specPath, []byte(`name: novelapp
+description: Novel app API
+version: 0.1.0
+base_url: https://api.example.com
+auth:
+  type: none
+config:
+  format: toml
+  path: ~/.config/novelapp-pp-cli/config.toml
+resources:
+  items:
+    description: Manage items
+    endpoints:
+      list:
+        method: GET
+        path: /items
+        description: List items
+`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(researchDir, "research.json"), []byte(`{
+  "api_name": "novelapp",
+  "novelty_score": 8,
+  "alternatives": [],
+  "gaps": [],
+  "patterns": [],
+  "recommendation": "proceed",
+  "researched_at": "2026-04-25T00:00:00Z",
+  "novel_features": [
+    {
+      "name": "Item insight",
+      "command": "items insight",
+      "description": "Summarize item state",
+      "rationale": "Requires local correlation"
+    }
+  ]
+}`), 0o644))
+
+	cmd := newGenerateCmd()
+	cmd.SetArgs([]string{
+		"--spec", specPath,
+		"--output", outputDir,
+		"--validate=false",
+		"--force",
+		"--research-dir", researchDir,
+	})
+
+	require.NoError(t, cmd.Execute())
+
+	data, err := os.ReadFile(filepath.Join(outputDir, pipeline.CLIManifestFilename))
+	require.NoError(t, err)
+	var manifest pipeline.CLIManifest
+	require.NoError(t, json.Unmarshal(data, &manifest))
+	assert.Empty(t, manifest.NovelFeatures)
+}
+
+func TestGenerateCmdCarriesVerifiedNovelFeaturesIntoManifest(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	specPath := filepath.Join(dir, "spec.yaml")
+	researchDir := filepath.Join(dir, "research")
+	outputDir := filepath.Join(dir, "verifiedapp")
+	require.NoError(t, os.MkdirAll(researchDir, 0o755))
+
+	require.NoError(t, os.WriteFile(specPath, []byte(`name: verifiedapp
+description: Verified app API
+version: 0.1.0
+base_url: https://api.example.com
+auth:
+  type: none
+config:
+  format: toml
+  path: ~/.config/verifiedapp-pp-cli/config.toml
+resources:
+  items:
+    description: Manage items
+    endpoints:
+      list:
+        method: GET
+        path: /items
+        description: List items
+`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(researchDir, "research.json"), []byte(`{
+  "api_name": "verifiedapp",
+  "novelty_score": 8,
+  "alternatives": [],
+  "gaps": [],
+  "patterns": [],
+  "recommendation": "proceed",
+  "researched_at": "2026-04-25T00:00:00Z",
+  "novel_features": [
+    {
+      "name": "Planned insight",
+      "command": "items planned",
+      "description": "Planned but not verified",
+      "rationale": "Requires local correlation"
+    }
+  ],
+  "novel_features_built": [
+    {
+      "name": "Built insight",
+      "command": "items insight",
+      "description": "Summarize item state",
+      "rationale": "Requires local correlation"
+    }
+  ]
+}`), 0o644))
+
+	cmd := newGenerateCmd()
+	cmd.SetArgs([]string{
+		"--spec", specPath,
+		"--output", outputDir,
+		"--validate=false",
+		"--force",
+		"--research-dir", researchDir,
+	})
+
+	require.NoError(t, cmd.Execute())
+
+	data, err := os.ReadFile(filepath.Join(outputDir, pipeline.CLIManifestFilename))
+	require.NoError(t, err)
+	var manifest pipeline.CLIManifest
+	require.NoError(t, json.Unmarshal(data, &manifest))
+	require.Len(t, manifest.NovelFeatures, 1)
+	assert.Equal(t, "Built insight", manifest.NovelFeatures[0].Name)
+	assert.Equal(t, "items insight", manifest.NovelFeatures[0].Command)
 }
 
 func TestGenerateCmdAppliesBrowserClearanceReachability(t *testing.T) {

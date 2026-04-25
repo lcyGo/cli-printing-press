@@ -909,6 +909,62 @@ paths:
 		assert.True(t, foundPrivate, "should have found /private endpoint")
 	})
 
+	t.Run("anonymous security alternative on every operation makes whole API no-auth", func(t *testing.T) {
+		t.Parallel()
+		yamlSpec := []byte(`openapi: "3.0.3"
+info:
+  title: Optional Auth API
+  version: "1.0.0"
+servers:
+  - url: https://api.example.com
+components:
+  securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: sessionid
+paths:
+  /pokemon:
+    get:
+      summary: List pokemon
+      security:
+        - cookieAuth: []
+        - basicAuth: []
+        - {}
+      responses:
+        "200":
+          description: OK
+  /pokemon/{id}:
+    get:
+      summary: Get pokemon
+      security:
+        - cookieAuth: []
+        - basicAuth: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+`)
+		parsed, err := Parse(yamlSpec)
+		require.NoError(t, err)
+
+		assert.Equal(t, "none", parsed.Auth.Type)
+		for _, r := range parsed.Resources {
+			for _, e := range r.Endpoints {
+				assert.True(t, e.NoAuth, "%s %s should be public", e.Method, e.Path)
+			}
+		}
+	})
+
 	t.Run("petstore still parses without regression", func(t *testing.T) {
 		t.Parallel()
 		data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "openapi", "petstore.yaml"))

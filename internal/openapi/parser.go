@@ -254,6 +254,11 @@ func parse(data []byte, lenient bool) (*spec.APISpec, error) {
 		baseURL = "https://api.example.com"
 	}
 
+	auth := mapAuth(doc, name)
+	if auth.Type != "none" && allOperationsAllowAnonymous(doc) {
+		auth = spec.AuthConfig{Type: "none"}
+	}
+
 	result := &spec.APISpec{
 		Name:        name,
 		Description: description,
@@ -262,7 +267,7 @@ func parse(data []byte, lenient bool) (*spec.APISpec, error) {
 		BasePath:    basePath,
 		WebsiteURL:  websiteURL,
 		ProxyRoutes: proxyRoutes,
-		Auth:        mapAuth(doc, name),
+		Auth:        auth,
 		Config: spec.ConfigSpec{
 			Format: "toml",
 			Path:   fmt.Sprintf("~/.config/%s-pp-cli/config.toml", name),
@@ -1153,6 +1158,28 @@ func operationAllowsAnonymous(op *openapi3.Operation, doc *openapi3.T) bool {
 		}
 	}
 	return false
+}
+
+func allOperationsAllowAnonymous(doc *openapi3.T) bool {
+	if doc == nil || doc.Paths == nil {
+		return false
+	}
+	seenOperation := false
+	for _, pathItem := range doc.Paths.Map() {
+		if pathItem == nil {
+			continue
+		}
+		for _, op := range pathItem.Operations() {
+			if op == nil {
+				continue
+			}
+			seenOperation = true
+			if !operationAllowsAnonymous(op, doc) {
+				return false
+			}
+		}
+	}
+	return seenOperation
 }
 
 // markAllEndpointsNoAuth sets NoAuth=true on every endpoint across all

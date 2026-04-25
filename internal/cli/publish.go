@@ -480,25 +480,38 @@ func runValidation(dir string) ValidateResult {
 
 	// 1. Manifest check
 	manifestPath := filepath.Join(dir, pipeline.CLIManifestFilename)
+	var manifest pipeline.CLIManifest
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
 		result.Checks = append(result.Checks, CheckResult{Name: "manifest", Passed: false, Error: "missing .printing-press.json"})
 		allPassed = false
 	} else {
-		var m pipeline.CLIManifest
-		if err := json.Unmarshal(data, &m); err != nil {
+		if err := json.Unmarshal(data, &manifest); err != nil {
 			result.Checks = append(result.Checks, CheckResult{Name: "manifest", Passed: false, Error: fmt.Sprintf("invalid JSON: %v", err)})
 			allPassed = false
 		} else {
-			if m.APIName == "" || m.CLIName == "" {
+			if manifest.APIName == "" || manifest.CLIName == "" {
 				result.Checks = append(result.Checks, CheckResult{Name: "manifest", Passed: false, Error: "missing required fields (api_name, cli_name)"})
 				allPassed = false
 			} else {
 				result.Checks = append(result.Checks, CheckResult{Name: "manifest", Passed: true})
-				result.CLIName = m.CLIName
-				result.APIName = m.APIName
+				result.CLIName = manifest.CLIName
+				result.APIName = manifest.APIName
 			}
 		}
+	}
+
+	// 2. Transcendence check. Published CLIs are expected to carry verified
+	// novel features from the absorb phase; a bare endpoint wrapper should not
+	// pass publish validation as shippable.
+	if manifest.APIName == "" || manifest.CLIName == "" {
+		result.Checks = append(result.Checks, CheckResult{Name: "transcendence", Passed: false, Error: "manifest unavailable"})
+		allPassed = false
+	} else if len(manifest.NovelFeatures) == 0 {
+		result.Checks = append(result.Checks, CheckResult{Name: "transcendence", Passed: false, Error: "no novel features recorded; run the absorb/transcend phase and dogfood before publishing"})
+		allPassed = false
+	} else {
+		result.Checks = append(result.Checks, CheckResult{Name: "transcendence", Passed: true})
 	}
 
 	cliName := result.CLIName
@@ -509,28 +522,28 @@ func runValidation(dir string) ValidateResult {
 	restoreBuildArtifacts := snapshotFiles(buildArtifactCandidates(dir, cliName))
 	defer restoreBuildArtifacts()
 
-	// 2. go mod tidy check — snapshot files, run tidy, compare, restore
+	// 3. go mod tidy check — snapshot files, run tidy, compare, restore
 	tidyCheck := checkGoModTidy(dir)
 	if !tidyCheck.Passed {
 		allPassed = false
 	}
 	result.Checks = append(result.Checks, tidyCheck)
 
-	// 3. go vet check
+	// 4. go vet check
 	vetCheck := runGoCheck(dir, "vet", "./...")
 	if !vetCheck.Passed {
 		allPassed = false
 	}
 	result.Checks = append(result.Checks, vetCheck)
 
-	// 4. go build check
+	// 5. go build check
 	buildCheck := runGoCheck(dir, "build", "./...")
 	if !buildCheck.Passed {
 		allPassed = false
 	}
 	result.Checks = append(result.Checks, buildCheck)
 
-	// 5. --help / --version checks use a dedicated temp binary so validation
+	// 6. --help / --version checks use a dedicated temp binary so validation
 	// exercises current source without depending on or mutating source-tree artifacts.
 	binaryPath, cleanupBinary, err := buildValidationBinary(dir, cliName)
 	if cleanupBinary != nil {
@@ -558,7 +571,7 @@ func runValidation(dir string) ValidateResult {
 			result.HelpOutput = string(helpOut)
 		}
 
-		// 6. --version check
+		// 7. --version check
 		verCtx, verCancel := context.WithTimeout(context.Background(), binaryCheckTimeout)
 		defer verCancel()
 		versionCmd := exec.CommandContext(verCtx, binaryPath, "--version")
@@ -575,7 +588,7 @@ func runValidation(dir string) ValidateResult {
 		}
 	}
 
-	// 7. Manuscripts check (warn-only)
+	// 8. Manuscripts check (warn-only)
 	// Try CLI name first (new convention), then API name, then fuzzy resolve
 	apiName := result.APIName
 	if apiName == "" {

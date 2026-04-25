@@ -20,6 +20,13 @@ func setLibraryTestEnv(t *testing.T) string {
 
 func writeTestManifest(t *testing.T, dir string, m pipeline.CLIManifest) {
 	t.Helper()
+	if m.APIName != "" && m.CLIName != "" && len(m.NovelFeatures) == 0 {
+		m.NovelFeatures = []pipeline.NovelFeatureManifest{{
+			Name:        "Test insight",
+			Command:     "insight",
+			Description: "Exercise publish validation in tests",
+		}}
+	}
 	data, err := json.MarshalIndent(m, "", "  ")
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, pipeline.CLIManifestFilename), data, 0o644))

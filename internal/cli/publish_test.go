@@ -143,18 +143,53 @@ func TestPublishValidateJSONHasAllChecks(t *testing.T) {
 	var result ValidateResult
 	require.NoError(t, json.Unmarshal([]byte(output), &result))
 
-	// Should have all 7 check names
+	// Should have all publish validation check names
 	checkNames := make(map[string]bool)
 	for _, c := range result.Checks {
 		checkNames[c.Name] = true
 	}
 
-	// All 7 checks should be present (they may fail in test env, but must exist)
-	expectedChecks := []string{"manifest", "go mod tidy", "go vet", "go build", "--help", "--version", "manuscripts"}
+	// All checks should be present (they may fail in test env, but must exist)
+	expectedChecks := []string{"manifest", "transcendence", "go mod tidy", "go vet", "go build", "--help", "--version", "manuscripts"}
 	for _, name := range expectedChecks {
 		assert.True(t, checkNames[name], "should have %q check", name)
 	}
-	assert.Len(t, result.Checks, 7, "should have exactly 7 checks")
+	assert.Len(t, result.Checks, len(expectedChecks), "should have exactly the expected checks")
+}
+
+func TestPublishValidateRequiresTranscendenceFeatures(t *testing.T) {
+	home := setLibraryTestEnv(t)
+	cliDir := filepath.Join(home, "library", "test-pp-cli")
+	require.NoError(t, os.MkdirAll(cliDir, 0o755))
+
+	data, err := json.MarshalIndent(pipeline.CLIManifest{
+		SchemaVersion: 1,
+		APIName:       "test",
+		CLIName:       "test-pp-cli",
+	}, "", "  ")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(cliDir, pipeline.CLIManifestFilename), data, 0o644))
+
+	cmd := newPublishCmd()
+	cmd.SetArgs([]string{"validate", "--dir", cliDir, "--json"})
+
+	output, err := runWithCapturedStdout(t, cmd.Execute)
+	require.Error(t, err)
+
+	var result ValidateResult
+	require.NoError(t, json.Unmarshal([]byte(output), &result))
+	assert.False(t, result.Passed)
+
+	var check *CheckResult
+	for i := range result.Checks {
+		if result.Checks[i].Name == "transcendence" {
+			check = &result.Checks[i]
+			break
+		}
+	}
+	require.NotNil(t, check)
+	assert.False(t, check.Passed)
+	assert.Contains(t, check.Error, "no novel features recorded")
 }
 
 func TestPublishValidateExitCode(t *testing.T) {
