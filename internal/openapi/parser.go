@@ -2572,19 +2572,19 @@ func sanitizeTypeName(name string) string {
 	if len(result) > 0 && !unicode.IsLetter(rune(result[0])) {
 		result = "T" + result
 	}
-	if isGoReservedWord(result) {
+	if isGoKeyword(result) {
 		result = "T" + result
 	}
 	return result
 }
 
-// goReservedWords is the set of reserved keywords from the Go language spec
+// goKeywords is the set of reserved words from the Go language spec
 // (https://go.dev/ref/spec#Keywords). When a sanitized type name matches one
 // of these, the generated `type X struct { ... }` will fail to parse;
 // sanitize prepends "T" to dodge the collision. Predeclared identifiers
 // (bool, int, string, error, etc.) shadow rather than fail and are
 // intentionally excluded.
-var goReservedWords = map[string]bool{
+var goKeywords = map[string]bool{
 	"break": true, "case": true, "chan": true, "const": true, "continue": true,
 	"default": true, "defer": true, "else": true, "fallthrough": true, "for": true,
 	"func": true, "go": true, "goto": true, "if": true, "import": true,
@@ -2592,8 +2592,9 @@ var goReservedWords = map[string]bool{
 	"select": true, "struct": true, "switch": true, "type": true, "var": true,
 }
 
-func isGoReservedWord(s string) bool {
-	return goReservedWords[s]
+// isGoKeyword reports whether s is a reserved word in the Go language spec.
+func isGoKeyword(s string) bool {
+	return goKeywords[s]
 }
 
 func toCamelCase(s string) string {
