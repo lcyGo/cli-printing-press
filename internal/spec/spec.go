@@ -36,8 +36,19 @@ const (
 )
 
 type APISpec struct {
-	Name            string              `yaml:"name" json:"name"`
-	Description     string              `yaml:"description" json:"description"`
+	Name string `yaml:"name" json:"name"`
+	// Description describes the API itself ("REST API for ordering pizza").
+	// It flows into generated docs and SKILL.md but is intentionally NOT used
+	// as the printed CLI's --help text; that's CLIDescription's job.
+	Description string `yaml:"description" json:"description"`
+	// CLIDescription, when set, becomes the printed CLI's root cobra command
+	// `Short:` text. Spec authors should phrase it as what the CLI does
+	// ("Order Seattle pizza from the terminal"), not what the API is. When
+	// blank the generator falls back to the research narrative's headline,
+	// then to a generic "Manage <api> resources via the <api> API". Adding
+	// this field eliminates a recurring manual rewrite step that the main
+	// skill used to instruct Claude to perform after every generation.
+	CLIDescription  string              `yaml:"cli_description,omitempty" json:"cli_description,omitempty"`
 	Version         string              `yaml:"version" json:"version"`
 	BaseURL         string              `yaml:"base_url" json:"base_url"`
 	BasePath        string              `yaml:"base_path,omitempty" json:"base_path,omitempty"`

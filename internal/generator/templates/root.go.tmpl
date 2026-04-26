@@ -65,13 +65,15 @@ func Execute() error {
            from producing a wall of text in --help
        Full novel-feature details with examples live in README/SKILL; Long
        names the capabilities so an agent can pick the right subcommand. */}}
-{{- if and .Narrative .Narrative.Headline}}
+{{- if .CLIDescription}}
+		Short: {{backtick}}{{goRawSafe (truncate 200 .CLIDescription)}}{{backtick}},
+{{- else if and .Narrative .Narrative.Headline}}
 		Short: {{backtick}}{{humanName .Name}} CLI — {{goRawSafe (truncate 120 .Narrative.Headline)}}{{backtick}},
 {{- else}}
 		Short: "Manage {{.Name}} resources via the {{.Name}} API",
 {{- end}}
 {{- if .TopNovelFeatures}}
-		Long: {{backtick}}{{humanName .Name}} CLI{{if and .Narrative .Narrative.Headline}} — {{goRawSafe (truncate 120 .Narrative.Headline)}}{{end}}
+		Long: {{backtick}}{{if .CLIDescription}}{{goRawSafe (truncate 200 .CLIDescription)}}{{else}}{{humanName .Name}} CLI{{if and .Narrative .Narrative.Headline}} — {{goRawSafe (truncate 120 .Narrative.Headline)}}{{end}}{{end}}
 
 Highlights (not in the official API docs):
 {{- range .TopNovelFeatures}}
@@ -84,6 +86,11 @@ Highlights (not in the official API docs):
 Agent mode: add --agent to any command for JSON output + non-interactive mode.
 Health check: run '{{.Name}}-pp-cli doctor' to verify auth and connectivity.
 See README.md or the bundled SKILL.md for recipes.{{backtick}},
+{{- else if .CLIDescription}}
+		Long: {{backtick}}{{goRawSafe (truncate 200 .CLIDescription)}}
+
+Add --agent to any command for JSON output + non-interactive mode.
+Run '{{.Name}}-pp-cli doctor' to verify auth and connectivity.{{backtick}},
 {{- else}}
 		Long: {{backtick}}Manage {{.Name}} resources via the {{.Name}} API.
 

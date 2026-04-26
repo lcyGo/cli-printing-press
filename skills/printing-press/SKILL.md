@@ -1473,12 +1473,15 @@ GraphQL-only APIs:
 
 After generation:
 
-**REQUIRED: Rewrite the CLI description.** The generator copies the spec's `description` field
-as the CLI's `Short` help text. Spec descriptions describe the *API* ("Payment processing API")
-but CLI help should describe what the *CLI does* ("Manage payments, subscriptions, and invoices
-via the Stripe API"). Open `$CLI_WORK_DIR/internal/cli/root.go`, find the
-`Short:` field on the root cobra command, and rewrite it as a concise, user-facing description
-of the CLI's purpose. Use the product thesis from the Phase 1 brief to inform the rewrite.
+**Verify the CLI description.** The root cobra command's `Short:` text comes from
+the spec's `cli_description` field when set, then falls back to `narrative.headline`
+in `research.json`, then to a generic `"Manage <api> resources via the <api> API"`.
+The first two phrasings describe what the *CLI does* ("Manage payments, subscriptions,
+and invoices via the Stripe API"); the generic fallback often does too but reads as
+template filler. Open `$CLI_WORK_DIR/internal/cli/root.go`, find the `Short:` field,
+and confirm it reads as user-facing CLI purpose rather than API description. If it
+needs a rewrite, prefer adding a `cli_description:` line to the spec and regenerating
+over hand-editing the generated file.
 
 **REQUIRED: Preserve README sections.** The generated README contains 5 standard sections
 that the scorecard checks for: Quick Start, Agent Usage, Health Check, Troubleshooting, and

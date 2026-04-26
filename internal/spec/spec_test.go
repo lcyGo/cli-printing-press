@@ -1739,3 +1739,45 @@ resources:
 		}
 	})
 }
+func TestCLIDescriptionParses(t *testing.T) {
+	t.Parallel()
+	input := `name: testapi
+base_url: https://api.example.com
+cli_description: "Manage testapi resources from the terminal"
+auth:
+  type: bearer_token
+  env_vars: [TESTAPI_TOKEN]
+resources:
+  store:
+    description: Stores
+    endpoints:
+      list:
+        method: GET
+        path: /stores
+        description: List stores
+`
+	s, err := ParseBytes([]byte(input))
+	require.NoError(t, err)
+	assert.Equal(t, "Manage testapi resources from the terminal", s.CLIDescription)
+}
+
+func TestCLIDescriptionAbsent(t *testing.T) {
+	t.Parallel()
+	input := `name: testapi
+base_url: https://api.example.com
+auth:
+  type: bearer_token
+  env_vars: [TESTAPI_TOKEN]
+resources:
+  store:
+    description: Stores
+    endpoints:
+      list:
+        method: GET
+        path: /stores
+        description: List stores
+`
+	s, err := ParseBytes([]byte(input))
+	require.NoError(t, err)
+	assert.Empty(t, s.CLIDescription, "field should be empty when not declared")
+}
