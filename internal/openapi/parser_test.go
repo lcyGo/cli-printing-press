@@ -252,6 +252,8 @@ func TestPathSegmentsStripsGenericAPIPrefix(t *testing.T) {
 		{"keeps api when followed by path param", "/api/{id}", "", "api"},
 		{"keeps rest when followed by path param", "/rest/{job_id}/runs", "", "rest"},
 		{"strips version then api", "/v1/api/networkentity", "", "networkentity"},
+		{"strips api then version", "/api/v2/pokemon", "", "pokemon"},
+		{"strips version then api then version", "/v2/api/v1/pokemon", "", "pokemon"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
