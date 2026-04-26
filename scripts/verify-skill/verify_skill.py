@@ -43,6 +43,7 @@ import re
 import shlex
 import sys
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Iterable
 
@@ -117,18 +118,259 @@ def parse_use(use_str: str) -> tuple[str, int, int, bool]:
     return name, required, optional, variadic
 
 
-def find_command_source(cli_dir: Path, cmd_path: list[str]):
-    """Locate source file(s) whose cobra.Command matches this path.
+# CONSTRUCTOR_RE matches `func newXxxCmd(...) *cobra.Command {`. The
+# parameter list pattern `\([^()]*(?:\([^()]*\)[^()]*)*\)` handles one
+# level of nested parens — the case that matters in practice is a
+# function-typed parameter like `func newFooCmd(handler func() error)
+# *cobra.Command`. Without the nested-paren handling the regex stops
+# at the first `)` (the closer of `func()`) and the constructor is
+# silently dropped from the constructor map. Two-level nesting (e.g.
+# `func()` inside another `func()`) would still fail; flag for the
+# legacy fallback when that pathological shape appears.
+CONSTRUCTOR_RE = re.compile(
+    r'^func\s+(new[A-Z]\w*Cmd)\s*'
+    r'\([^()]*(?:\([^()]*\)[^()]*)*\)'
+    r'\s*\*cobra\.Command\s*\{',
+    re.MULTILINE,
+)
+ADDCMD_CHILD_RE = re.compile(r'\.AddCommand\s*\(\s*(new[A-Z]\w*Cmd)\s*\(')
+ROOT_ADDCMD_RE = re.compile(r'rootCmd\.AddCommand\s*\(\s*(new[A-Z]\w*Cmd)\s*\(')
 
-    Returns (go_files, use_str, args_info) where go_files is a list.
-    Why a list: CLIs sometimes declare the same Use in two files (historical
-    artifact or generator + transcendence both shipping a version of the
-    same command). Cobra only registers one at runtime, but we don't know
-    which without parsing root.go's AddCommand calls. Returning all matching
-    files lets callers union their flags when checking declarations.
+
+def _extract_function_body(text: str, start_offset: int) -> str | None:
+    """Given the offset just after the opening `{` of a function body,
+    return the body text (excluding the closing `}`). Tracks string and
+    comment state so braces inside string literals or comments don't
+    confuse the depth counter. Returns None if the body is unclosed.
+    """
+    depth = 1
+    i = start_offset
+    n = len(text)
+    in_string: str | None = None  # holds the active string opener: '"', '`', or "'"
+    in_line_comment = False
+    in_block_comment = False
+    while i < n and depth > 0:
+        c = text[i]
+        if in_line_comment:
+            if c == '\n':
+                in_line_comment = False
+            i += 1
+            continue
+        if in_block_comment:
+            if c == '*' and i + 1 < n and text[i + 1] == '/':
+                in_block_comment = False
+                i += 2
+                continue
+            i += 1
+            continue
+        if in_string is not None:
+            if c == '\\' and in_string != '`' and i + 1 < n:
+                # Skip the escaped char (still inside the string)
+                i += 2
+                continue
+            if c == in_string:
+                in_string = None
+            i += 1
+            continue
+        if c == '/' and i + 1 < n:
+            if text[i + 1] == '/':
+                in_line_comment = True
+                i += 2
+                continue
+            if text[i + 1] == '*':
+                in_block_comment = True
+                i += 2
+                continue
+        if c in ('"', '`', "'"):
+            in_string = c
+            i += 1
+            continue
+        if c == '{':
+            depth += 1
+        elif c == '}':
+            depth -= 1
+        i += 1
+    if depth != 0:
+        return None
+    return text[start_offset:i - 1]
+
+
+@dataclass
+class CommandConstructor:
+    name: str
+    file: Path
+    use: str
+    args_info: tuple | None
+    children: list[str] = field(default_factory=list)
+
+
+@lru_cache(maxsize=None)
+def collect_command_constructors(cli_dir: Path) -> dict[str, CommandConstructor]:
+    """Scan internal/cli/*.go for `func newXxxCmd(...) *cobra.Command`
+    declarations. For each, capture the Use string, the cobra.Args
+    validator, and the list of child constructor names called via
+    `<var>.AddCommand(newYyyCmd(...))` within the function body.
+
+    Result maps constructor name → CommandConstructor.
+
+    Cached per cli_dir for the lifetime of the process. verify-skill
+    invokes find_command_source once per recipe in SKILL.md (typically
+    5-15) and the source tree doesn't change mid-run, so the
+    file-system scan only needs to happen once. Callers must not
+    mutate the returned dict (it's the cache's storage).
+    """
+    src = cli_dir / "internal/cli"
+    if not src.exists():
+        return {}
+    constructors: dict[str, CommandConstructor] = {}
+    for go_file in src.glob("*.go"):
+        if go_file.name.endswith("_test.go"):
+            continue
+        try:
+            text = go_file.read_text()
+        except Exception:
+            continue
+        for m in CONSTRUCTOR_RE.finditer(text):
+            fn_name = m.group(1)
+            body = _extract_function_body(text, m.end())
+            if body is None:
+                continue
+            use_match = USE_RE.search(body)
+            if not use_match:
+                continue
+            args_match = ARGS_RE.search(body)
+            args_info = (args_match.group(1), args_match.group(2)) if args_match else None
+            children = list(dict.fromkeys(
+                child.group(1) for child in ADDCMD_CHILD_RE.finditer(body)
+            ))
+            constructors[fn_name] = CommandConstructor(
+                name=fn_name,
+                file=go_file,
+                use=use_match.group(1),
+                args_info=args_info,
+                children=children,
+            )
+    return constructors
+
+
+@lru_cache(maxsize=None)
+def find_root_children(cli_dir: Path) -> list[str]:
+    """Return the constructor names called from `rootCmd.AddCommand(...)`
+    anywhere in internal/cli/*.go. The ordering follows source order, but
+    the result is deduplicated.
+
+    Cached per cli_dir; callers must not mutate the returned list.
+    See collect_command_constructors for rationale."""
+    src = cli_dir / "internal/cli"
+    if not src.exists():
+        return []
+    seen: dict[str, None] = {}
+    for go_file in src.glob("*.go"):
+        if go_file.name.endswith("_test.go"):
+            continue
+        try:
+            text = go_file.read_text()
+        except Exception:
+            continue
+        for m in ROOT_ADDCMD_RE.finditer(text):
+            seen.setdefault(m.group(1), None)
+    return list(seen)
+
+
+def resolve_command_path(
+    cli_dir: Path,
+    cmd_path: list[str],
+    constructors: dict[str, CommandConstructor] | None = None,
+    root_children: list[str] | None = None,
+):
+    """Walk the AddCommand graph to find the canonical declaring file for
+    cmd_path. Returns (file, use_str, args_info) or (None, None, None) if
+    the path can't be resolved (unknown command, unconventional CLI).
+
+    This is the durable replacement for the old specificity-based
+    disambiguation in find_command_source. It picks the file based on
+    actual command-tree structure rather than guessing from `Use:` token
+    counts. See retro #301 finding F1.
+    """
+    if not cmd_path:
+        return None, None, None
+    if constructors is None:
+        constructors = collect_command_constructors(cli_dir)
+    if root_children is None:
+        root_children = find_root_children(cli_dir)
+    if not constructors or not root_children:
+        return None, None, None
+
+    current = None
+    for fn_name in root_children:
+        info = constructors.get(fn_name)
+        if info is None:
+            continue
+        leaf, _, _, _ = parse_use(info.use)
+        if leaf == cmd_path[0]:
+            current = info
+            break
+    if current is None:
+        return None, None, None
+
+    for token in cmd_path[1:]:
+        next_info = None
+        for child_fn in current.children:
+            child = constructors.get(child_fn)
+            if child is None:
+                continue
+            leaf, _, _, _ = parse_use(child.use)
+            if leaf == token:
+                next_info = child
+                break
+        if next_info is None:
+            return None, None, None
+        current = next_info
+
+    return current.file, current.use, current.args_info
+
+
+def find_command_source(cli_dir: Path, cmd_path: list[str]):
+    """Locate the source file whose cobra.Command matches this path.
+
+    Returns (go_files, use_str, args_info) where go_files is a list (kept
+    list-shaped for backwards compatibility — most callers iterate it for
+    `flag_declared_in` lookups).
+
+    Resolution strategy:
+
+      1. Walk the rootCmd.AddCommand graph (the durable approach added in
+         retro #301 F1). When the CLI follows the standard `func newXxxCmd`
+         + `<parent>.AddCommand(newXxxCmd(...))` convention, this returns
+         exactly one file per command path with no false positives, even
+         when two different commands share a leaf name (e.g.,
+         `recipe-goat-pp-cli save` vs `recipe-goat-pp-cli profile save`).
+
+      2. If the graph walk fails (unconventional CLI, missing rootCmd,
+         constructor functions not named `newXxxCmd`), fall back to a
+         legacy specificity heuristic that scans every Go file for any
+         `Use:` whose first token matches the leaf. The legacy path is
+         imperfect (it can pick the wrong file when leaves collide) but
+         keeps the tool useful on CLIs that don't follow the standard
+         convention.
     """
     if not cmd_path:
         return [], None, None
+
+    file, use_str, args_info = resolve_command_path(cli_dir, cmd_path)
+    if file is not None:
+        return [file], use_str, args_info
+
+    # Legacy fallback — kept to preserve behavior for unconventional CLIs.
+    return _legacy_find_command_source(cli_dir, cmd_path)
+
+
+def _legacy_find_command_source(cli_dir: Path, cmd_path: list[str]):
+    """Pre-retro-#301 specificity-based heuristic. Retained as a fallback
+    for CLIs whose command structure doesn't match the standard
+    `rootCmd.AddCommand(newXxxCmd(...))` pattern resolve_command_path
+    expects (e.g., commands constructed via local helpers, or files that
+    declare cobra.Commands without going through a `newXxxCmd` factory)."""
     leaf = cmd_path[-1]
     src = cli_dir / "internal/cli"
     if not src.exists():
@@ -157,17 +399,12 @@ def find_command_source(cli_dir: Path, cmd_path: list[str]):
     if not candidates:
         return [], None, None
 
-    # Multi-token paths: prefer filename-match (e.g., contacts_search.go for
-    # cmd_path ["contacts", "search"]).
     if len(cmd_path) >= 2:
         expected_basename = "_".join(cmd_path).replace("-", "_") + ".go"
         for spec, go_file, use_str, args_info in candidates:
             if go_file.name == expected_basename:
                 return [go_file], use_str, args_info
 
-    # Single-token paths (or no filename match): take all files at the
-    # highest specificity tier. For flag verification, any one of them
-    # declaring the flag counts. For Use string, pick the representative.
     candidates.sort(key=lambda c: -c[0])
     top_spec = candidates[0][0]
     top_files = [c[1] for c in candidates if c[0] == top_spec]

@@ -69,6 +69,80 @@ fixture-pp-cli search "chicken" --max-time 30m
 		"diagnostic must name the exact mismatch so the skill reader knows what to fix")
 }
 
+// TestVerifySkill_NoFalsePositiveOnSharedLeafName is the regression
+// guard for retro #301 finding F1: when two cobra commands share a leaf
+// name at different paths (e.g., a top-level `save <url>` plus a
+// `profile save <name>` subcommand), the old specificity-based file
+// picker silently dropped the lower-specificity file from the
+// flag-declaration union check. The result was a false-positive
+// `--<flag> is declared elsewhere but not on save` even though the flag
+// was correctly declared on the top-level save command.
+//
+// This test writes a synthetic CLI with that exact shape and asserts
+// the verifier does NOT report a false-positive flag-commands finding
+// when the SKILL example uses a flag declared on the top-level command.
+func TestVerifySkill_NoFalsePositiveOnSharedLeafName(t *testing.T) {
+	bin := buildPrintingPressBinary(t)
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "internal", "cli"), 0o755))
+
+	// root.go wires both save and profile into rootCmd. The verifier
+	// must follow rootCmd.AddCommand calls to know that cmd_path=['save']
+	// resolves to save_cmd.go (not profile.go's profile-save subcommand).
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "internal", "cli", "root.go"), []byte(`package cli
+import "github.com/spf13/cobra"
+func Execute() error {
+	rootCmd := &cobra.Command{Use: "fixture-pp-cli"}
+	rootCmd.AddCommand(newSaveCmd())
+	rootCmd.AddCommand(newProfileCmd())
+	return rootCmd.Execute()
+}
+`), 0o644))
+
+	// Top-level save: declares --tags. Use string is intentionally
+	// short so the legacy specificity heuristic would lose the tie-break
+	// against profile.go's longer Use string.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "internal", "cli", "save_cmd.go"), []byte(`package cli
+import "github.com/spf13/cobra"
+func newSaveCmd() *cobra.Command {
+	var tags string
+	cmd := &cobra.Command{Use: "save <url>"}
+	cmd.Flags().StringVar(&tags, "tags", "", "Comma-separated tags")
+	return cmd
+}
+`), 0o644))
+
+	// profile save: declares its own flags. Use string is more specific
+	// (more positionals + variadic), which would win the legacy
+	// tie-break and drop save_cmd.go from the flag check.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "internal", "cli", "profile.go"), []byte(`package cli
+import "github.com/spf13/cobra"
+func newProfileCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "profile"}
+	cmd.AddCommand(newProfileSaveCmd())
+	return cmd
+}
+func newProfileSaveCmd() *cobra.Command {
+	var label string
+	cmd := &cobra.Command{Use: "save <name> [--<flag> <value> ...]"}
+	cmd.Flags().StringVar(&label, "label", "", "Profile label")
+	return cmd
+}
+`), 0o644))
+
+	// SKILL uses --tags on the top-level save command. The graph walk
+	// must resolve to save_cmd.go (which declares --tags) and not
+	// profile.go (which declares --label).
+	skill := "---\nname: pp-fixture\n---\n\n# Fixture\n\n```bash\nfixture-pp-cli save https://example.com --tags foo,bar\n```\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(skill), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".printing-press.json"), []byte(`{"cli_name":"fixture-pp-cli"}`), 0o644))
+
+	out, err := exec.Command(bin, "verify-skill", "--dir", dir).CombinedOutput()
+	require.NoError(t, err, "verifier must NOT raise findings for valid shared-leaf usage; got: %s", string(out))
+	require.Contains(t, string(out), "All checks passed",
+		"shared-leaf disambiguation should resolve via rootCmd.AddCommand graph, not specificity heuristic")
+}
+
 // TestVerifySkill_PassesWhenSkillMatches confirms the verifier doesn't
 // false-positive on a well-formed CLI.
 func TestVerifySkill_PassesWhenSkillMatches(t *testing.T) {
