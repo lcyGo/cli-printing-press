@@ -86,12 +86,30 @@ type CompScore struct {
 // RunScorecard evaluates generated CLI files and produces a scorecard.
 // If verifyReport is non-nil, verify results calibrate the final score.
 func RunScorecard(outputDir, pipelineDir, specPath string, verifyReport *VerifyReport) (*Scorecard, error) {
-	sc := &Scorecard{}
+	sc := &Scorecard{APIName: filepath.Base(outputDir)}
 
-	// Infer API name from outputDir basename
-	sc.APIName = filepath.Base(outputDir)
+	if err := scoreScorecardDimensions(sc, outputDir, specPath, verifyReport); err != nil {
+		return nil, err
+	}
+	finalizeScorecard(sc, outputDir, pipelineDir, verifyReport)
 
-	// Score each Steinberger dimension by inspecting generated files
+	if err := writeScorecardArtifacts(sc, pipelineDir); err != nil {
+		return sc, err
+	}
+
+	return sc, nil
+}
+
+func scoreScorecardDimensions(sc *Scorecard, outputDir, specPath string, verifyReport *VerifyReport) error {
+	scoreInfrastructureDimensions(sc, outputDir)
+	if err := scoreSpecDimensions(sc, outputDir, specPath); err != nil {
+		return err
+	}
+	scoreDomainDimensions(sc, outputDir, verifyReport)
+	return nil
+}
+
+func scoreInfrastructureDimensions(sc *Scorecard, outputDir string) {
 	sc.Steinberger.OutputModes = scoreOutputModes(outputDir)
 	sc.Steinberger.Auth = scoreAuth(outputDir)
 	sc.Steinberger.ErrorHandling = scoreErrorHandling(outputDir)
@@ -131,36 +149,42 @@ func RunScorecard(outputDir, pipelineDir, specPath string, verifyReport *VerifyR
 	sc.Steinberger.Workflows = scoreWorkflows(outputDir)
 	sc.Steinberger.Insight = scoreInsight(outputDir)
 	sc.Steinberger.AgentWorkflow = scoreAgentWorkflow(outputDir)
+}
 
-	if specPath != "" {
-		spec, err := loadOpenAPISpec(specPath)
-		if err != nil {
-			return nil, err
-		}
-
-		if spec.IsSynthetic() {
-			// Hand-built commands intentionally go beyond the spec; path-validity
-			// is not applicable. Mark unscored so the tier-2 denominator excludes
-			// it rather than awarding a 10-point cushion the CLI didn't earn.
-			sc.UnscoredDimensions = append(sc.UnscoredDimensions, "path_validity")
-		} else {
-			pathValidity := evaluatePathValidity(outputDir, spec)
-			sc.Steinberger.PathValidity = pathValidity.score
-			if !pathValidity.scored {
-				sc.UnscoredDimensions = append(sc.UnscoredDimensions, "path_validity")
-			}
-		}
-
-		authProtocol := evaluateAuthProtocol(outputDir, spec)
-		sc.Steinberger.AuthProtocol = authProtocol.score
-		if !authProtocol.scored {
-			sc.UnscoredDimensions = append(sc.UnscoredDimensions, "auth_protocol")
-		}
-	} else {
+func scoreSpecDimensions(sc *Scorecard, outputDir, specPath string) error {
+	if specPath == "" {
 		// No spec: mark spec-dependent dimensions as unscored.
 		sc.UnscoredDimensions = append(sc.UnscoredDimensions, "path_validity", "auth_protocol")
+		return nil
 	}
 
+	spec, err := loadOpenAPISpec(specPath)
+	if err != nil {
+		return err
+	}
+
+	if spec.IsSynthetic() {
+		// Hand-built commands intentionally go beyond the spec; path-validity
+		// is not applicable. Mark unscored so the tier-2 denominator excludes
+		// it rather than awarding a 10-point cushion the CLI didn't earn.
+		sc.UnscoredDimensions = append(sc.UnscoredDimensions, "path_validity")
+	} else {
+		pathValidity := evaluatePathValidity(outputDir, spec)
+		sc.Steinberger.PathValidity = pathValidity.score
+		if !pathValidity.scored {
+			sc.UnscoredDimensions = append(sc.UnscoredDimensions, "path_validity")
+		}
+	}
+
+	authProtocol := evaluateAuthProtocol(outputDir, spec)
+	sc.Steinberger.AuthProtocol = authProtocol.score
+	if !authProtocol.scored {
+		sc.UnscoredDimensions = append(sc.UnscoredDimensions, "auth_protocol")
+	}
+	return nil
+}
+
+func scoreDomainDimensions(sc *Scorecard, outputDir string, verifyReport *VerifyReport) {
 	sc.Steinberger.DataPipelineIntegrity = scoreDataPipelineIntegrity(outputDir)
 	sc.Steinberger.SyncCorrectness = scoreSyncCorrectness(outputDir)
 	sc.Steinberger.TypeFidelity = scoreTypeFidelity(outputDir)
@@ -177,10 +201,9 @@ func RunScorecard(outputDir, pipelineDir, specPath string, verifyReport *VerifyR
 	} else {
 		sc.UnscoredDimensions = append(sc.UnscoredDimensions, "live_api_verification")
 	}
+}
 
-	// Tier 1: Infrastructure (string-matching, 190 max; reduced per dimension
-	// when the opt-in MCP, cache_freshness, and new MCP-shape dimensions are
-	// absent for this CLI — see tier1Max below).
+func finalizeScorecard(sc *Scorecard, outputDir, pipelineDir string, verifyReport *VerifyReport) {
 	browserSessionUnverified := verifyReport != nil && verifyReport.BrowserSessionRequired && verifyReport.BrowserSessionProof != "valid"
 	sc.browserSessionUnverified = browserSessionUnverified
 	if browserSessionUnverified {
@@ -191,25 +214,6 @@ func RunScorecard(outputDir, pipelineDir, specPath string, verifyReport *VerifyR
 			sc.Steinberger.AuthProtocol = 5
 		}
 	}
-	tier1Raw := sc.Steinberger.OutputModes +
-		sc.Steinberger.Auth +
-		sc.Steinberger.ErrorHandling +
-		sc.Steinberger.TerminalUX +
-		sc.Steinberger.README +
-		sc.Steinberger.Doctor +
-		sc.Steinberger.AgentNative +
-		sc.Steinberger.MCPQuality +
-		sc.Steinberger.MCPTokenEff +
-		sc.Steinberger.MCPRemoteTransport +
-		sc.Steinberger.MCPToolDesign +
-		sc.Steinberger.MCPSurfaceStrategy +
-		sc.Steinberger.LocalCache +
-		sc.Steinberger.CacheFreshness +
-		sc.Steinberger.Breadth +
-		sc.Steinberger.Vision +
-		sc.Steinberger.Workflows +
-		sc.Steinberger.Insight +
-		sc.Steinberger.AgentWorkflow
 
 	// Apply verify caps to dimensions BEFORE tier calculation so Total stays consistent
 	if verifyReport != nil {
@@ -218,64 +222,11 @@ func RunScorecard(outputDir, pipelineDir, specPath string, verifyReport *VerifyR
 		}
 	}
 
-	// Tier 2: Domain Correctness (semantic, 60 max when live verify ran)
-	tier2Raw := sc.Steinberger.PathValidity +
-		sc.Steinberger.AuthProtocol +
-		sc.Steinberger.DataPipelineIntegrity +
-		sc.Steinberger.SyncCorrectness +
-		sc.Steinberger.TypeFidelity +
-		sc.Steinberger.DeadCode +
-		sc.Steinberger.LiveAPIVerification
-
-	// Weighted composite: Tier 1 = 50%, Tier 2 = 50% of final 100-point scale.
-	// Tier 1 max is 160 with MCP + cache_freshness, 150 without MCP, 150 without
-	// cache_freshness, 140 without either.
-	tier1Max := 190
-	if sc.IsDimensionUnscored("mcp_token_efficiency") {
-		tier1Max -= 10
-	}
-	if sc.IsDimensionUnscored("cache_freshness") {
-		tier1Max -= 10
-	}
-	if sc.IsDimensionUnscored("mcp_remote_transport") {
-		tier1Max -= 10
-	}
-	if sc.IsDimensionUnscored("mcp_tool_design") {
-		tier1Max -= 10
-	}
-	if sc.IsDimensionUnscored("mcp_surface_strategy") {
-		tier1Max -= 10
-	}
-	tier1Normalized := (tier1Raw * 50) / tier1Max // scale 0-tier1Max to 0-50
-	// Tier 2 max is 60 when live verify ran, 50 otherwise. The live-verify
-	// dimension is opt-in: a CLI that only ran mock-backed verify keeps the
-	// same effective tier2 denominator it had before the dimension existed,
-	// so grades for existing CLIs do not shift when this gate lands.
-	tier2Max := 60
-	if sc.IsDimensionUnscored("live_api_verification") {
-		tier2Max -= 10
-	}
-	if sc.IsDimensionUnscored("path_validity") {
-		tier2Max -= 10
-	}
-	if sc.IsDimensionUnscored("auth_protocol") {
-		tier2Max -= 10
-	}
-
-	tier2Normalized := 0
-	if tier2Max > 0 {
-		tier2Normalized = (tier2Raw * 50) / tier2Max
-	}
-	sc.Steinberger.Total = tier1Normalized + tier2Normalized
-
-	if sc.Steinberger.Total > 0 {
-		sc.Steinberger.Percentage = sc.Steinberger.Total // Total IS the percentage (0-100)
-	}
-
 	if verifyReport != nil {
 		verifyScore := int(verifyReport.PassRate)
 		sc.verifyCalibrationFloor = (verifyScore * 80) / 100 // 91% verify -> 72 floor
 	}
+	recomputeScorecardTotals(sc)
 	applyScorecardCalibration(sc)
 
 	// Grade
@@ -294,16 +245,16 @@ func RunScorecard(outputDir, pipelineDir, specPath string, verifyReport *VerifyR
 
 	// Competitor comparison from research.json
 	sc.CompetitorScores = buildCompetitorScores(sc.Steinberger.Total, pipelineDir)
+}
 
-	// Write scorecard artifacts
+func writeScorecardArtifacts(sc *Scorecard, pipelineDir string) error {
 	if err := writeScorecardMD(sc, pipelineDir); err != nil {
-		return sc, fmt.Errorf("writing scorecard.md: %w", err)
+		return fmt.Errorf("writing scorecard.md: %w", err)
 	}
 	if err := writeScorecardJSON(sc, pipelineDir); err != nil {
-		return sc, fmt.Errorf("writing scorecard.json: %w", err)
+		return fmt.Errorf("writing scorecard.json: %w", err)
 	}
-
-	return sc, nil
+	return nil
 }
 
 func (sc *Scorecard) IsDimensionUnscored(name string) bool {
