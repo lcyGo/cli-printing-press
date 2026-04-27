@@ -150,7 +150,8 @@ Every commit and PR title must include one of these scopes. The `PR Title` actio
 - `fix(scope):` → patch (0.4.0 → 0.4.1)
 - `feat(scope):` → minor (0.4.0 → 0.5.0)
 - `feat(scope)!:` or `BREAKING CHANGE:` footer → major (0.4.0 → 1.0.0)
-- `docs:`, `chore:`, `refactor:`, `test:` → included in next release but don't trigger a bump alone
+- `refactor(scope):` → included in the next release PR but doesn't trigger a bump alone
+- `docs:`, `chore:`, `test:` → don't trigger a bump alone and stay out of release notes by default
 
 **PR titles must follow the same format.** GitHub's "Squash and merge" uses the PR title as the squash commit message, so release-please reads PR titles on main. The `PR Title` GitHub Action (`.github/workflows/pr-title.yml`) enforces this — PRs with invalid titles cannot merge.
 
