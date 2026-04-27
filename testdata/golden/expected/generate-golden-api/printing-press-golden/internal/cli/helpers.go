@@ -1147,18 +1147,6 @@ func wrapWithProvenance(data json.RawMessage, prov DataProvenance) (json.RawMess
 	return json.Marshal(envelope)
 }
 
-// wrapResultsWithFreshness gives hand-authored commands a small opt-in helper
-// for the generated provenance envelope without forcing arbitrary custom JSON
-// outputs to change shape.
-func wrapResultsWithFreshness(data json.RawMessage, flags *rootFlags) (json.RawMessage, error) {
-	prov := DataProvenance{}
-	if flags != nil {
-		prov.Source = flags.dataSource
-		prov.Freshness = flags.freshnessMeta
-	}
-	return wrapWithProvenance(data, prov)
-}
-
 // defaultDBPath returns the canonical path for the local SQLite database.
 func defaultDBPath(name string) string {
 	home, _ := os.UserHomeDir()
