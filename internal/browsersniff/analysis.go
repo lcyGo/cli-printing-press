@@ -42,6 +42,22 @@ type TrafficAnalysisSummary struct {
 	TimeEnd          string         `json:"time_end,omitempty"`
 }
 
+// EvidenceRef cites a piece of evidence for an observation. Two flavors:
+//
+//   - Object form (HAR-derived): `EntryIndex >= 0` references a specific
+//     entry in the captured HAR; the other fields describe the request.
+//     Produced by the HAR analyzer and serialized as a JSON object.
+//
+//   - String form (prose-derived): `EntryIndex == -1` is the sentinel for
+//     a hand-authored evidence string. The `Reason` field carries the
+//     prose; other fields are zero-valued. Serialized as a JSON string,
+//     not an object — round-trip preserves intent. Used for hand-authored
+//     traffic-analysis.json files where the evidence is observational
+//     prose rather than a HAR entry pointer.
+//
+// Consumers reading evidence can distinguish the two via `EntryIndex`:
+// `>= 0` is HAR-derived and the other fields are usable; `== -1` means
+// only `Reason` carries information.
 type EvidenceRef struct {
 	EntryIndex  int    `json:"entry_index"`
 	Method      string `json:"method,omitempty"`
@@ -50,6 +66,51 @@ type EvidenceRef struct {
 	Status      int    `json:"status,omitempty"`
 	ContentType string `json:"content_type,omitempty"`
 	Reason      string `json:"reason,omitempty"`
+}
+
+// EvidenceRefStringSentinel is the EntryIndex value that marks a string-derived
+// evidence entry. Object-derived entries have EntryIndex >= 0.
+const EvidenceRefStringSentinel = -1
+
+// MarshalJSON emits string form when the sentinel is set, object form
+// otherwise. This keeps round-trips stable: a string in → a string out;
+// an object in → an object out.
+func (e EvidenceRef) MarshalJSON() ([]byte, error) {
+	if e.EntryIndex == EvidenceRefStringSentinel {
+		// String-derived: emit only the Reason value as a JSON string.
+		return json.Marshal(e.Reason)
+	}
+	// Object-derived: use a local alias type so we don't infinite-loop on
+	// MarshalJSON. Standard Go pattern for "marshal me as a struct".
+	type alias EvidenceRef
+	return json.Marshal(alias(e))
+}
+
+// UnmarshalJSON accepts either an object (HAR-derived) or a string
+// (hand-authored prose). On a string input, populates Reason and sets
+// EntryIndex to the sentinel.
+func (e *EvidenceRef) UnmarshalJSON(data []byte) error {
+	// Try string first: cheaper to detect and the empty-data case
+	// returns a clear error rather than a confusing zero-struct.
+	if len(data) > 0 && data[0] == '"' {
+		var s string
+		if err := json.Unmarshal(data, &s); err != nil {
+			return fmt.Errorf("evidence ref string: %w", err)
+		}
+		*e = EvidenceRef{
+			EntryIndex: EvidenceRefStringSentinel,
+			Reason:     s,
+		}
+		return nil
+	}
+	// Object form: standard struct unmarshal via local alias.
+	type alias EvidenceRef
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return fmt.Errorf("evidence ref object: %w", err)
+	}
+	*e = EvidenceRef(a)
+	return nil
 }
 
 type ProtocolObservation struct {

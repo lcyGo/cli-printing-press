@@ -539,3 +539,103 @@ func clusterHosts(clusters []EndpointCluster) []string {
 	}
 	return hosts
 }
+
+func TestEvidenceRef_RoundTripObjectForm(t *testing.T) {
+	t.Parallel()
+	in := EvidenceRef{
+		EntryIndex:  3,
+		Method:      "GET",
+		Host:        "example.com",
+		Path:        "/api/v1/users",
+		Status:      200,
+		ContentType: "application/json",
+		Reason:      "200 with JSON body",
+	}
+	data, err := json.Marshal(in)
+	require.NoError(t, err)
+	// Object form should marshal as a JSON object, not a string.
+	assert.True(t, len(data) > 0 && data[0] == '{', "expected object form, got: %s", data)
+
+	var out EvidenceRef
+	require.NoError(t, json.Unmarshal(data, &out))
+	assert.Equal(t, in, out, "object-form roundtrip should be lossless")
+}
+
+func TestEvidenceRef_RoundTripStringForm(t *testing.T) {
+	t.Parallel()
+	in := EvidenceRef{
+		EntryIndex: EvidenceRefStringSentinel,
+		Reason:     "Surf cleared the challenge; plain curl returned 429.",
+	}
+	data, err := json.Marshal(in)
+	require.NoError(t, err)
+	// String form should marshal as a quoted JSON string, not an object.
+	assert.True(t, len(data) > 0 && data[0] == '"', "expected string form, got: %s", data)
+
+	var out EvidenceRef
+	require.NoError(t, json.Unmarshal(data, &out))
+	assert.Equal(t, EvidenceRefStringSentinel, out.EntryIndex, "string roundtrip preserves sentinel")
+	assert.Equal(t, in.Reason, out.Reason, "string roundtrip preserves Reason")
+	assert.Empty(t, out.Method, "string-derived has no Method")
+	assert.Empty(t, out.Host, "string-derived has no Host")
+}
+
+func TestEvidenceRef_UnmarshalAcceptsString(t *testing.T) {
+	t.Parallel()
+	// A bare JSON string should unmarshal cleanly into an EvidenceRef.
+	var out EvidenceRef
+	require.NoError(t, json.Unmarshal([]byte(`"prose evidence"`), &out))
+	assert.Equal(t, EvidenceRefStringSentinel, out.EntryIndex)
+	assert.Equal(t, "prose evidence", out.Reason)
+}
+
+func TestEvidenceRef_UnmarshalAcceptsObject(t *testing.T) {
+	t.Parallel()
+	// Existing object-shaped HAR-derived form continues to work.
+	var out EvidenceRef
+	require.NoError(t, json.Unmarshal([]byte(`{"entry_index": 7, "method": "POST", "host": "x.com"}`), &out))
+	assert.Equal(t, 7, out.EntryIndex)
+	assert.Equal(t, "POST", out.Method)
+	assert.Equal(t, "x.com", out.Host)
+}
+
+func TestEvidenceRef_MixedArrayInTrafficAnalysis(t *testing.T) {
+	t.Parallel()
+	// Traffic-analysis files in the wild may carry mixed object + string
+	// evidence (HAR-derived alongside hand-authored prose). Verify the
+	// reachability evidence array survives a round-trip through the full
+	// TrafficAnalysis struct.
+	raw := []byte(`{
+  "version": "1",
+  "summary": {"entry_count": 0, "api_entry_count": 0, "noise_entry_count": 0},
+  "reachability": {
+    "mode": "browser_http",
+    "confidence": 0.9,
+    "evidence": [
+      "Surf with Chrome impersonation cleared Vercel without cookies.",
+      {"entry_index": 0, "method": "GET", "host": "food52.com", "status": 429}
+    ]
+  },
+  "protocols": [],
+  "auth": {},
+  "endpoint_clusters": []
+}`)
+	var ta TrafficAnalysis
+	require.NoError(t, json.Unmarshal(raw, &ta))
+	require.NotNil(t, ta.Reachability)
+	require.Len(t, ta.Reachability.Evidence, 2)
+	// First entry is string-derived
+	assert.Equal(t, EvidenceRefStringSentinel, ta.Reachability.Evidence[0].EntryIndex)
+	assert.Contains(t, ta.Reachability.Evidence[0].Reason, "Surf")
+	// Second entry is HAR-derived
+	assert.Equal(t, 0, ta.Reachability.Evidence[1].EntryIndex)
+	assert.Equal(t, "GET", ta.Reachability.Evidence[1].Method)
+
+	// Round-trip preserves shapes: string stays string, object stays object.
+	out, err := json.Marshal(ta)
+	require.NoError(t, err)
+	assert.Contains(t, string(out), `"Surf with Chrome impersonation cleared Vercel without cookies."`,
+		"string-form evidence should re-emit as a JSON string")
+	assert.Contains(t, string(out), `"entry_index":0`,
+		"object-form evidence should re-emit as a JSON object")
+}

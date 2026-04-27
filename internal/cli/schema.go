@@ -35,10 +35,10 @@ const trafficAnalysisSchemaJSON = `{
       "additionalProperties": false,
       "required": ["mode", "confidence"],
       "properties": {
-        "mode": {"type": "string", "enum": ["standard_http", "browser_clearance_http", "browser_required", "blocked", "unknown"]},
+        "mode": {"type": "string", "enum": ["standard_http", "browser_http", "browser_clearance_http", "browser_required", "blocked", "unknown"]},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
         "reasons": {"type": "array", "items": {"type": "string"}},
-        "evidence": {"type": "array", "items": {"$ref": "#/$defs/evidence_ref"}}
+        "evidence": {"type": "array", "items": {"oneOf": [{"$ref": "#/$defs/evidence_ref"}, {"type": "string"}]}}
       }
     },
     "protocols": {"type": "array", "items": {"$ref": "#/$defs/protocol_observation"}},
@@ -79,7 +79,7 @@ const trafficAnalysisSchemaJSON = `{
       "properties": {
         "label": {"type": "string"},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-        "evidence": {"type": "array", "items": {"$ref": "#/$defs/evidence_ref"}},
+        "evidence": {"type": "array", "items": {"oneOf": [{"$ref": "#/$defs/evidence_ref"}, {"type": "string"}]}},
         "details": {"type": "object", "additionalProperties": {"type": "string"}}
       }
     },
@@ -104,7 +104,7 @@ const trafficAnalysisSchemaJSON = `{
       "properties": {
         "label": {"type": "string"},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-        "evidence": {"type": "array", "items": {"$ref": "#/$defs/evidence_ref"}},
+        "evidence": {"type": "array", "items": {"oneOf": [{"$ref": "#/$defs/evidence_ref"}, {"type": "string"}]}},
         "notes": {"type": "array", "items": {"type": "string"}}
       }
     },
@@ -151,7 +151,7 @@ const trafficAnalysisSchemaJSON = `{
       "properties": {
         "label": {"type": "string"},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-        "evidence": {"type": "array", "items": {"$ref": "#/$defs/evidence_ref"}},
+        "evidence": {"type": "array", "items": {"oneOf": [{"$ref": "#/$defs/evidence_ref"}, {"type": "string"}]}},
         "notes": {"type": "array", "items": {"type": "string"}}
       }
     },
