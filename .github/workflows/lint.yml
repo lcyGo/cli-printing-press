@@ -16,14 +16,47 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check whether Go lint is needed
+        id: changes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git fetch --no-tags --prune origin "${{ github.base_ref }}"
+          mapfile -t changed < <(git diff --name-only --diff-filter=ACMR "origin/${{ github.base_ref }}...HEAD")
+
+          echo "Changed files:"
+          printf '  %s\n' "${changed[@]}"
+
+          needs_lint=false
+          for file in "${changed[@]}"; do
+            case "$file" in
+              *.go|go.mod|go.sum|.golangci.yml|.github/workflows/lint.yml)
+                needs_lint=true
+                break
+                ;;
+            esac
+          done
+
+          echo "needs_lint=$needs_lint" >> "$GITHUB_OUTPUT"
+
+      - name: Skip Go lint
+        if: steps.changes.outputs.needs_lint != 'true'
+        run: |
+          echo "Skipping golangci-lint: no Go, module, lint config, or lint workflow files changed."
 
       - uses: actions/setup-go@v6
+        if: steps.changes.outputs.needs_lint == 'true'
         with:
           go-version-file: go.mod
           cache: true
           cache-dependency-path: go.sum
 
       - uses: golangci/golangci-lint-action@v9
+        if: steps.changes.outputs.needs_lint == 'true'
         with:
           version: v2.11.4
 
