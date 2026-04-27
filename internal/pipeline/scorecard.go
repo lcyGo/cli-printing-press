@@ -118,37 +118,30 @@ func scoreInfrastructureDimensions(sc *Scorecard, outputDir string) {
 	sc.Steinberger.Doctor = scoreDoctor(outputDir)
 	sc.Steinberger.AgentNative = scoreAgentNative(outputDir)
 	sc.Steinberger.MCPQuality = scoreMCPQuality(outputDir)
-	if mcpTokenScore, scored := scoreMCPTokenEfficiency(outputDir); scored {
-		sc.Steinberger.MCPTokenEff = mcpTokenScore
-	} else {
-		sc.UnscoredDimensions = append(sc.UnscoredDimensions, "mcp_token_efficiency")
-	}
-	if remoteScore, scored := scoreMCPRemoteTransport(outputDir); scored {
-		sc.Steinberger.MCPRemoteTransport = remoteScore
-	} else {
-		sc.UnscoredDimensions = append(sc.UnscoredDimensions, "mcp_remote_transport")
-	}
-	if toolDesignScore, scored := scoreMCPToolDesign(outputDir); scored {
-		sc.Steinberger.MCPToolDesign = toolDesignScore
-	} else {
-		sc.UnscoredDimensions = append(sc.UnscoredDimensions, "mcp_tool_design")
-	}
-	if strategyScore, scored := scoreMCPSurfaceStrategy(outputDir); scored {
-		sc.Steinberger.MCPSurfaceStrategy = strategyScore
-	} else {
-		sc.UnscoredDimensions = append(sc.UnscoredDimensions, "mcp_surface_strategy")
-	}
+	mcpTokenScore, mcpTokenScored := scoreMCPTokenEfficiency(outputDir)
+	recordOptionalScore(sc, &sc.Steinberger.MCPTokenEff, "mcp_token_efficiency", mcpTokenScore, mcpTokenScored)
+	remoteScore, remoteScored := scoreMCPRemoteTransport(outputDir)
+	recordOptionalScore(sc, &sc.Steinberger.MCPRemoteTransport, "mcp_remote_transport", remoteScore, remoteScored)
+	toolDesignScore, toolDesignScored := scoreMCPToolDesign(outputDir)
+	recordOptionalScore(sc, &sc.Steinberger.MCPToolDesign, "mcp_tool_design", toolDesignScore, toolDesignScored)
+	strategyScore, strategyScored := scoreMCPSurfaceStrategy(outputDir)
+	recordOptionalScore(sc, &sc.Steinberger.MCPSurfaceStrategy, "mcp_surface_strategy", strategyScore, strategyScored)
 	sc.Steinberger.LocalCache = scoreLocalCache(outputDir)
-	if cacheFreshnessScore, scored := scoreCacheFreshness(outputDir); scored {
-		sc.Steinberger.CacheFreshness = cacheFreshnessScore
-	} else {
-		sc.UnscoredDimensions = append(sc.UnscoredDimensions, "cache_freshness")
-	}
+	cacheFreshnessScore, cacheFreshnessScored := scoreCacheFreshness(outputDir)
+	recordOptionalScore(sc, &sc.Steinberger.CacheFreshness, "cache_freshness", cacheFreshnessScore, cacheFreshnessScored)
 	sc.Steinberger.Breadth = scoreBreadth(outputDir)
 	sc.Steinberger.Vision = scoreVision(outputDir)
 	sc.Steinberger.Workflows = scoreWorkflows(outputDir)
 	sc.Steinberger.Insight = scoreInsight(outputDir)
 	sc.Steinberger.AgentWorkflow = scoreAgentWorkflow(outputDir)
+}
+
+func recordOptionalScore(sc *Scorecard, target *int, dimension string, score int, scored bool) {
+	if scored {
+		*target = score
+		return
+	}
+	sc.UnscoredDimensions = append(sc.UnscoredDimensions, dimension)
 }
 
 func scoreSpecDimensions(sc *Scorecard, outputDir, specPath string) error {
@@ -837,71 +830,68 @@ func removeUnscoredDimension(dimensions []string, name string) []string {
 }
 
 func recomputeScorecardTotals(sc *Scorecard) {
-	tier1Raw := sc.Steinberger.OutputModes +
-		sc.Steinberger.Auth +
-		sc.Steinberger.ErrorHandling +
-		sc.Steinberger.TerminalUX +
-		sc.Steinberger.README +
-		sc.Steinberger.Doctor +
-		sc.Steinberger.AgentNative +
-		sc.Steinberger.MCPQuality +
-		sc.Steinberger.MCPTokenEff +
-		sc.Steinberger.MCPRemoteTransport +
-		sc.Steinberger.MCPToolDesign +
-		sc.Steinberger.MCPSurfaceStrategy +
-		sc.Steinberger.LocalCache +
-		sc.Steinberger.CacheFreshness +
-		sc.Steinberger.Breadth +
-		sc.Steinberger.Vision +
-		sc.Steinberger.Workflows +
-		sc.Steinberger.Insight +
-		sc.Steinberger.AgentWorkflow
+	tier1Raw := sumScorecardDimensions(
+		sc.Steinberger.OutputModes,
+		sc.Steinberger.Auth,
+		sc.Steinberger.ErrorHandling,
+		sc.Steinberger.TerminalUX,
+		sc.Steinberger.README,
+		sc.Steinberger.Doctor,
+		sc.Steinberger.AgentNative,
+		sc.Steinberger.MCPQuality,
+		sc.Steinberger.MCPTokenEff,
+		sc.Steinberger.MCPRemoteTransport,
+		sc.Steinberger.MCPToolDesign,
+		sc.Steinberger.MCPSurfaceStrategy,
+		sc.Steinberger.LocalCache,
+		sc.Steinberger.CacheFreshness,
+		sc.Steinberger.Breadth,
+		sc.Steinberger.Vision,
+		sc.Steinberger.Workflows,
+		sc.Steinberger.Insight,
+		sc.Steinberger.AgentWorkflow,
+	)
 
-	tier1Max := 190
-	if sc.IsDimensionUnscored("mcp_token_efficiency") {
-		tier1Max -= 10
-	}
-	if sc.IsDimensionUnscored("cache_freshness") {
-		tier1Max -= 10
-	}
-	if sc.IsDimensionUnscored("mcp_remote_transport") {
-		tier1Max -= 10
-	}
-	if sc.IsDimensionUnscored("mcp_tool_design") {
-		tier1Max -= 10
-	}
-	if sc.IsDimensionUnscored("mcp_surface_strategy") {
-		tier1Max -= 10
-	}
+	tier1Max := scorecardTierMax(sc, 190, "mcp_token_efficiency", "cache_freshness", "mcp_remote_transport", "mcp_tool_design", "mcp_surface_strategy")
 	tier1Normalized := 0
 	if tier1Max > 0 {
 		tier1Normalized = (tier1Raw * 50) / tier1Max
 	}
 
-	tier2Raw := sc.Steinberger.PathValidity +
-		sc.Steinberger.AuthProtocol +
-		sc.Steinberger.DataPipelineIntegrity +
-		sc.Steinberger.SyncCorrectness +
-		sc.Steinberger.TypeFidelity +
-		sc.Steinberger.DeadCode +
-		sc.Steinberger.LiveAPIVerification
+	tier2Raw := sumScorecardDimensions(
+		sc.Steinberger.PathValidity,
+		sc.Steinberger.AuthProtocol,
+		sc.Steinberger.DataPipelineIntegrity,
+		sc.Steinberger.SyncCorrectness,
+		sc.Steinberger.TypeFidelity,
+		sc.Steinberger.DeadCode,
+		sc.Steinberger.LiveAPIVerification,
+	)
 
-	tier2Max := 60
-	if sc.IsDimensionUnscored("live_api_verification") {
-		tier2Max -= 10
-	}
-	if sc.IsDimensionUnscored("path_validity") {
-		tier2Max -= 10
-	}
-	if sc.IsDimensionUnscored("auth_protocol") {
-		tier2Max -= 10
-	}
+	tier2Max := scorecardTierMax(sc, 60, "live_api_verification", "path_validity", "auth_protocol")
 	tier2Normalized := 0
 	if tier2Max > 0 {
 		tier2Normalized = (tier2Raw * 50) / tier2Max
 	}
 	sc.Steinberger.Total = tier1Normalized + tier2Normalized
 	sc.Steinberger.Percentage = sc.Steinberger.Total
+}
+
+func sumScorecardDimensions(scores ...int) (total int) {
+	for _, score := range scores {
+		total += score
+	}
+	return total
+}
+
+func scorecardTierMax(sc *Scorecard, base int, optionalDimensions ...string) int {
+	max := base
+	for _, name := range optionalDimensions {
+		if sc.IsDimensionUnscored(name) {
+			max -= 10
+		}
+	}
+	return max
 }
 
 func scoreBreadth(dir string) int {
