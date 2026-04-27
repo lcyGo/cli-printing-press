@@ -25,6 +25,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+          cache-dependency-path: go.sum
 
       - name: Build printing-press
         run: go build -o ./printing-press ./cmd/printing-press
