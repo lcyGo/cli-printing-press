@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -313,6 +314,237 @@ func TestShipcheck_RejectsDirWithoutGoMod(t *testing.T) {
 	if exitErr.Code != ExitInputError {
 		t.Errorf("expected ExitInputError; got %d", exitErr.Code)
 	}
+}
+
+// TestShipcheck_NoFix_OmitsFixFromVerify confirms --no-fix removes
+// --fix from verify's argv. Used when an operator wants a read-only
+// shipcheck pass without verify mutating source files.
+func TestShipcheck_NoFix_OmitsFixFromVerify(t *testing.T) {
+	stub := buildShipcheckStub(t)
+	defer withStubBinary(t, stub)()
+
+	dir := fakeCLIDir(t)
+	logFile := filepath.Join(t.TempDir(), "stub.log")
+	t.Setenv("STUB_LOG_FILE", logFile)
+
+	if err := runShipcheckCmd(t, "--dir", dir, "--no-fix"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	verifyArgs := findInvocation(readStubLog(t, logFile), "verify")
+	if argvHas(verifyArgs, "--fix") {
+		t.Errorf("--no-fix should omit --fix from verify argv; got %v", verifyArgs)
+	}
+}
+
+// TestShipcheck_NoLiveCheck_OmitsLiveCheckFromScorecard confirms
+// --no-live-check removes --live-check from scorecard's argv. Used when
+// an operator wants a quick scorecard read without sampling live calls.
+func TestShipcheck_NoLiveCheck_OmitsLiveCheckFromScorecard(t *testing.T) {
+	stub := buildShipcheckStub(t)
+	defer withStubBinary(t, stub)()
+
+	dir := fakeCLIDir(t)
+	logFile := filepath.Join(t.TempDir(), "stub.log")
+	t.Setenv("STUB_LOG_FILE", logFile)
+
+	if err := runShipcheckCmd(t, "--dir", dir, "--no-live-check"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	scorecardArgs := findInvocation(readStubLog(t, logFile), "scorecard")
+	if argvHas(scorecardArgs, "--live-check") {
+		t.Errorf("--no-live-check should omit --live-check from scorecard argv; got %v", scorecardArgs)
+	}
+}
+
+// TestShipcheck_PassesAuthFlagsToVerify confirms --api-key and --env-var
+// flow through to verify (and only verify — other legs do not accept them).
+func TestShipcheck_PassesAuthFlagsToVerify(t *testing.T) {
+	stub := buildShipcheckStub(t)
+	defer withStubBinary(t, stub)()
+
+	dir := fakeCLIDir(t)
+	logFile := filepath.Join(t.TempDir(), "stub.log")
+	t.Setenv("STUB_LOG_FILE", logFile)
+
+	if err := runShipcheckCmd(t,
+		"--dir", dir,
+		"--api-key", "ghp_test123",
+		"--env-var", "GITHUB_TOKEN",
+	); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	invocations := readStubLog(t, logFile)
+	verifyArgs := findInvocation(invocations, "verify")
+	if !argvHas(verifyArgs, "--api-key") || !argvHas(verifyArgs, "ghp_test123") {
+		t.Errorf("verify argv missing --api-key: %v", verifyArgs)
+	}
+	if !argvHas(verifyArgs, "--env-var") || !argvHas(verifyArgs, "GITHUB_TOKEN") {
+		t.Errorf("verify argv missing --env-var: %v", verifyArgs)
+	}
+
+	// Other legs must NOT receive these flags — they don't accept them.
+	for _, leg := range []string{"dogfood", "workflow-verify", "verify-skill", "scorecard"} {
+		args := findInvocation(invocations, leg)
+		if argvHas(args, "--api-key") {
+			t.Errorf("%s argv should not include --api-key; got %v", leg, args)
+		}
+		if argvHas(args, "--env-var") {
+			t.Errorf("%s argv should not include --env-var; got %v", leg, args)
+		}
+	}
+}
+
+// TestShipcheck_StrictPassesToVerifySkill confirms --strict propagates
+// to verify-skill (and only verify-skill — other legs don't accept it).
+func TestShipcheck_StrictPassesToVerifySkill(t *testing.T) {
+	stub := buildShipcheckStub(t)
+	defer withStubBinary(t, stub)()
+
+	dir := fakeCLIDir(t)
+	logFile := filepath.Join(t.TempDir(), "stub.log")
+	t.Setenv("STUB_LOG_FILE", logFile)
+
+	if err := runShipcheckCmd(t, "--dir", dir, "--strict"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	invocations := readStubLog(t, logFile)
+	vsArgs := findInvocation(invocations, "verify-skill")
+	if !argvHas(vsArgs, "--strict") {
+		t.Errorf("verify-skill argv missing --strict: %v", vsArgs)
+	}
+	for _, leg := range []string{"dogfood", "verify", "workflow-verify", "scorecard"} {
+		args := findInvocation(invocations, leg)
+		if argvHas(args, "--strict") {
+			t.Errorf("%s argv should not include --strict; got %v", leg, args)
+		}
+	}
+}
+
+// TestShipcheck_JSONEnvelope_AllPass: --json produces parseable JSON
+// with the expected shape when every leg passes.
+func TestShipcheck_JSONEnvelope_AllPass(t *testing.T) {
+	stub := buildShipcheckStub(t)
+	defer withStubBinary(t, stub)()
+
+	dir := fakeCLIDir(t)
+	logFile := filepath.Join(t.TempDir(), "stub.log")
+	t.Setenv("STUB_LOG_FILE", logFile)
+
+	out := captureStdout(t, func() {
+		if err := runShipcheckCmd(t, "--dir", dir, "--json"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	// The output stream is mixed: stub's own stdout plus the JSON
+	// envelope at end-of-run. Find the JSON envelope by locating the
+	// final `}` and walking back to the matching `{`.
+	envelopeJSON := extractFinalJSONObject(t, out)
+
+	var env shipcheckJSONEnvelope
+	if err := json.Unmarshal([]byte(envelopeJSON), &env); err != nil {
+		t.Fatalf("envelope is not valid JSON: %v\n--- envelope ---\n%s", err, envelopeJSON)
+	}
+	if !env.Passed {
+		t.Errorf("expected passed=true; got %+v", env)
+	}
+	if env.ExitCode != 0 {
+		t.Errorf("expected exit_code=0; got %d", env.ExitCode)
+	}
+	if len(env.Legs) != len(shipcheckLegs) {
+		t.Errorf("expected %d legs in envelope; got %d", len(shipcheckLegs), len(env.Legs))
+	}
+	for _, leg := range env.Legs {
+		if !leg.Passed {
+			t.Errorf("leg %s should be passed=true; got %+v", leg.Name, leg)
+		}
+		if leg.ExitCode != 0 {
+			t.Errorf("leg %s should have exit_code=0; got %d", leg.Name, leg.ExitCode)
+		}
+		if leg.Command == "" {
+			t.Errorf("leg %s should have non-empty command; got %+v", leg.Name, leg)
+		}
+		if leg.StartedAt == "" {
+			t.Errorf("leg %s should have non-empty started_at; got %+v", leg.Name, leg)
+		}
+	}
+}
+
+// TestShipcheck_JSONEnvelope_OneFailure: --json envelope reflects a
+// failing leg with passed=false at the leg and envelope level.
+func TestShipcheck_JSONEnvelope_OneFailure(t *testing.T) {
+	stub := buildShipcheckStub(t)
+	defer withStubBinary(t, stub)()
+
+	dir := fakeCLIDir(t)
+	logFile := filepath.Join(t.TempDir(), "stub.log")
+	t.Setenv("STUB_LOG_FILE", logFile)
+	t.Setenv("STUB_EXIT_VERIFY_SKILL", "1")
+
+	out := captureStdout(t, func() {
+		err := runShipcheckCmd(t, "--dir", dir, "--json")
+		if err == nil {
+			t.Fatal("expected non-nil error when verify-skill fails")
+		}
+	})
+
+	var env shipcheckJSONEnvelope
+	if err := json.Unmarshal([]byte(extractFinalJSONObject(t, out)), &env); err != nil {
+		t.Fatalf("envelope is not valid JSON: %v", err)
+	}
+
+	if env.Passed {
+		t.Errorf("envelope.passed should be false when verify-skill failed")
+	}
+	if env.ExitCode != 1 {
+		t.Errorf("envelope.exit_code should be 1; got %d", env.ExitCode)
+	}
+
+	var failingLeg *shipcheckJSONLeg
+	for i, l := range env.Legs {
+		if l.Name == "verify-skill" {
+			failingLeg = &env.Legs[i]
+			break
+		}
+	}
+	if failingLeg == nil {
+		t.Fatal("envelope missing verify-skill leg")
+	}
+	if failingLeg.Passed {
+		t.Errorf("verify-skill leg should be passed=false")
+	}
+	if failingLeg.ExitCode != 1 {
+		t.Errorf("verify-skill leg should have exit_code=1; got %d", failingLeg.ExitCode)
+	}
+}
+
+// extractFinalJSONObject finds the last balanced `{...}` block in s.
+// The umbrella's --json mode mixes per-leg stub output with the final
+// envelope; this walks from the end back to the matching brace.
+func extractFinalJSONObject(t *testing.T, s string) string {
+	t.Helper()
+	end := strings.LastIndex(s, "}")
+	if end < 0 {
+		t.Fatalf("no JSON object found in output:\n%s", s)
+	}
+	depth := 0
+	for i := end; i >= 0; i-- {
+		switch s[i] {
+		case '}':
+			depth++
+		case '{':
+			depth--
+			if depth == 0 {
+				return s[i : end+1]
+			}
+		}
+	}
+	t.Fatalf("could not find matching `{` for trailing `}` in output:\n%s", s)
+	return ""
 }
 
 // TestShipcheckUmbrellaCode_Aggregation tests the pure exit-code aggregator.

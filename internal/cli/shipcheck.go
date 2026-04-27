@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,10 +32,28 @@ import (
 // shipcheckOpts holds every flag the umbrella accepts. Each leg's argv
 // builder is a closure over an opts pointer, so adding a flag = adding
 // a field here and consulting it from the relevant builder.
+//
+// noFix and noLiveCheck are opt-OUT flags: --fix and --live-check are on
+// by default because the canonical Phase 4 invocation enables them. The
+// opt-outs exist so an operator can ask for a quick read-only sweep
+// without verify auto-repairing source or scorecard sampling live calls.
 type shipcheckOpts struct {
 	dir         string
 	spec        string
 	researchDir string
+
+	// JSON envelope output. When set, suppresses the human summary table
+	// and emits a structured envelope at end-of-run instead. Each leg's
+	// own stdout/stderr still streams to the operator's terminal during
+	// the run; the envelope is end-of-run only.
+	asJSON bool
+
+	// Per-leg pass-through flags.
+	noFix       bool   // when true, omit --fix from verify argv
+	noLiveCheck bool   // when true, omit --live-check from scorecard argv
+	apiKey      string // when set, pass --api-key to verify
+	envVar      string // when set, pass --env-var to verify
+	strict      bool   // when set, pass --strict to verify-skill
 }
 
 // shipcheckLeg names one verification leg and how to invoke it.
@@ -70,8 +90,15 @@ var shipcheckLegs = []shipcheckLeg{
 			if o.spec != "" {
 				a = append(a, "--spec", o.spec)
 			}
-			// --fix is on by default. U2 will add --no-fix to disable.
-			a = append(a, "--fix")
+			if !o.noFix {
+				a = append(a, "--fix")
+			}
+			if o.apiKey != "" {
+				a = append(a, "--api-key", o.apiKey)
+			}
+			if o.envVar != "" {
+				a = append(a, "--env-var", o.envVar)
+			}
 			return a
 		},
 	},
@@ -84,7 +111,11 @@ var shipcheckLegs = []shipcheckLeg{
 	{
 		name: "verify-skill",
 		args: func(o *shipcheckOpts) []string {
-			return []string{"verify-skill", "--dir", o.dir}
+			a := []string{"verify-skill", "--dir", o.dir}
+			if o.strict {
+				a = append(a, "--strict")
+			}
+			return a
 		},
 	},
 	{
@@ -97,8 +128,9 @@ var shipcheckLegs = []shipcheckLeg{
 			if o.spec != "" {
 				a = append(a, "--spec", o.spec)
 			}
-			// --live-check is on by default. U2 will add --no-live-check.
-			a = append(a, "--live-check")
+			if !o.noLiveCheck {
+				a = append(a, "--live-check")
+			}
 			return a
 		},
 	},
@@ -106,10 +138,11 @@ var shipcheckLegs = []shipcheckLeg{
 
 // shipcheckLegResult is the per-leg outcome of one umbrella run.
 type shipcheckLegResult struct {
-	Name     string
-	Argv     []string
-	ExitCode int
-	Elapsed  time.Duration
+	Name      string
+	Argv      []string
+	ExitCode  int
+	StartedAt time.Time
+	Elapsed   time.Duration
 }
 
 // Passed reports whether the leg exited 0.
@@ -135,8 +168,15 @@ var resolveSelfBinary = func() (string, error) {
 	return exe, nil
 }
 
-// runShipcheckLeg spawns one leg as a subprocess, streaming its
-// stdout/stderr to the operator's terminal, and captures the exit code.
+// runShipcheckLeg spawns one leg as a subprocess and captures its exit
+// code.
+//
+// In default (human) mode, the leg's stdout/stderr stream to the
+// operator's terminal in real time so they see progress as it happens.
+// In --json mode, leg output is discarded so the umbrella's JSON
+// envelope is the only thing on stdout (clean for jq pipes); operators
+// who want per-leg detail in JSON mode should run the leg directly with
+// --json. This trade-off keeps both consumer modes simple.
 //
 // Returns ExitCode 0 on clean completion, the child's exit code on
 // non-zero exit, and an error only when the subprocess could not be
@@ -147,17 +187,26 @@ func runShipcheckLeg(binPath string, leg shipcheckLeg, opts *shipcheckOpts) (shi
 	argv := leg.args(opts)
 	cmd := exec.Command(binPath, argv...)
 	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	if opts.asJSON {
+		// Discard per-leg output so the envelope at end-of-run is the
+		// only thing on stdout. Legs whose own stdout/stderr matters
+		// for diagnosis can be re-run standalone.
+		cmd.Stdout = io.Discard
+		cmd.Stderr = io.Discard
+	} else {
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+	}
 
 	start := time.Now()
 	runErr := cmd.Run()
 	elapsed := time.Since(start)
 
 	res := shipcheckLegResult{
-		Name:    leg.name,
-		Argv:    argv,
-		Elapsed: elapsed,
+		Name:      leg.name,
+		Argv:      argv,
+		StartedAt: start,
+		Elapsed:   elapsed,
 	}
 	if runErr == nil {
 		res.ExitCode = 0
@@ -217,6 +266,55 @@ func shipcheckUmbrellaCode(results []shipcheckLegResult) int {
 	return max
 }
 
+// shipcheckJSONLeg is one entry in the JSON envelope's legs[] array.
+// Field names use snake_case to match the rest of the binary's JSON
+// output conventions (exit_code over code, elapsed_ms over duration).
+type shipcheckJSONLeg struct {
+	Name      string `json:"name"`
+	ExitCode  int    `json:"exit_code"`
+	Passed    bool   `json:"passed"`
+	StartedAt string `json:"started_at"`
+	ElapsedMS int64  `json:"elapsed_ms"`
+	Command   string `json:"command"`
+}
+
+// shipcheckJSONEnvelope is the structured output emitted with --json. The
+// envelope is end-of-run; per-leg stdout/stderr still streams during the
+// run. Operators piping --json output to jq should redirect stderr.
+type shipcheckJSONEnvelope struct {
+	Passed    bool               `json:"passed"`
+	ExitCode  int                `json:"exit_code"`
+	StartedAt string             `json:"started_at"`
+	ElapsedMS int64              `json:"elapsed_ms"`
+	Legs      []shipcheckJSONLeg `json:"legs"`
+}
+
+// renderShipcheckJSON marshals the envelope to w. Each leg's `command`
+// field shows the full argv as it would be invoked at the shell so an
+// operator can copy-paste-rerun a specific leg from the JSON output.
+func renderShipcheckJSON(w *os.File, binPath string, results []shipcheckLegResult, runStartedAt time.Time, runElapsed time.Duration) error {
+	env := shipcheckJSONEnvelope{
+		Passed:    shipcheckUmbrellaCode(results) == 0,
+		ExitCode:  shipcheckUmbrellaCode(results),
+		StartedAt: runStartedAt.UTC().Format(time.RFC3339),
+		ElapsedMS: runElapsed.Milliseconds(),
+		Legs:      make([]shipcheckJSONLeg, 0, len(results)),
+	}
+	for _, r := range results {
+		env.Legs = append(env.Legs, shipcheckJSONLeg{
+			Name:      r.Name,
+			ExitCode:  r.ExitCode,
+			Passed:    r.Passed(),
+			StartedAt: r.StartedAt.UTC().Format(time.RFC3339),
+			ElapsedMS: r.Elapsed.Milliseconds(),
+			Command:   strings.Join(append([]string{binPath}, r.Argv...), " "),
+		})
+	}
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(env)
+}
+
 // validateShipcheckDir confirms --dir points at something that looks
 // like a built printing-press CLI: a directory containing go.mod and
 // either an internal/cli/ tree or a cmd/<name>-pp-cli/ tree. We are
@@ -255,9 +353,11 @@ Legs (in canonical order):
   verify-skill     — SKILL.md flag/positional/command consistency with the shipped CLI
   scorecard        — Steinberger quality bar (with --live-check sampling novel features)
 
-Every leg streams its full output to the terminal as it runs; a per-leg verdict
-table is printed at the end. The command exits non-zero when any leg fails,
-with the exit code reflecting the most serious leg failure.
+In default mode, every leg streams its full output to the terminal as it runs
+and a per-leg verdict table prints at the end. In --json mode, leg output is
+suppressed and the only stdout is a structured envelope at end-of-run. The
+command exits non-zero when any leg fails, with the exit code reflecting the
+most serious leg failure.
 
 Each leg remains callable standalone — this command is additive orchestration.`,
 		Example: `  # Canonical Phase 4 invocation
@@ -280,9 +380,17 @@ Each leg remains callable standalone — this command is additive orchestration.
 				return &ExitError{Code: ExitInputError, Err: err}
 			}
 
+			runStart := time.Now()
 			results := make([]shipcheckLegResult, 0, len(shipcheckLegs))
 			for _, leg := range shipcheckLegs {
-				fmt.Fprintf(os.Stdout, "\n=== %s ===\n", leg.name)
+				// Don't print the per-leg banner in JSON mode — the
+				// envelope at end-of-run is the structured signal.
+				// Per-leg stdout/stderr still streams (some legs print
+				// their own JSON or progress) so operators piping --json
+				// to jq should redirect stderr.
+				if !opts.asJSON {
+					fmt.Fprintf(os.Stdout, "\n=== %s ===\n", leg.name)
+				}
 				res, runErr := runShipcheckLeg(binPath, leg, opts)
 				if runErr != nil {
 					// Subprocess failed to start. Record as a synthetic
@@ -294,8 +402,15 @@ Each leg remains callable standalone — this command is additive orchestration.
 				}
 				results = append(results, res)
 			}
+			runElapsed := time.Since(runStart)
 
-			renderShipcheckSummary(os.Stdout, results)
+			if opts.asJSON {
+				if err := renderShipcheckJSON(os.Stdout, binPath, results, runStart, runElapsed); err != nil {
+					return fmt.Errorf("rendering JSON envelope: %w", err)
+				}
+			} else {
+				renderShipcheckSummary(os.Stdout, results)
+			}
 
 			code := shipcheckUmbrellaCode(results)
 			if code != 0 {
@@ -318,6 +433,12 @@ Each leg remains callable standalone — this command is additive orchestration.
 	cmd.Flags().StringVar(&opts.dir, "dir", "", "Path to the generated CLI directory (required)")
 	cmd.Flags().StringVar(&opts.spec, "spec", "", "Path to the OpenAPI spec file (passed to dogfood, verify, scorecard)")
 	cmd.Flags().StringVar(&opts.researchDir, "research-dir", "", "Pipeline directory containing research.json (passed to dogfood and scorecard)")
+	cmd.Flags().BoolVar(&opts.asJSON, "json", false, "Emit a structured JSON envelope at end-of-run (suppresses per-leg stdout for clean piping; run legs standalone with --json for per-leg detail)")
+	cmd.Flags().BoolVar(&opts.noFix, "no-fix", false, "Disable verify's --fix auto-repair loop (read-only verify)")
+	cmd.Flags().BoolVar(&opts.noLiveCheck, "no-live-check", false, "Disable scorecard's --live-check live-API sampling")
+	cmd.Flags().StringVar(&opts.apiKey, "api-key", "", "API key for verify's live testing (read-only GETs only)")
+	cmd.Flags().StringVar(&opts.envVar, "env-var", "", "Environment variable name verify should read for the API key (e.g., GITHUB_TOKEN)")
+	cmd.Flags().BoolVar(&opts.strict, "strict", false, "Pass --strict to verify-skill (treat likely-false-positive findings as failures)")
 
 	return cmd
 }
