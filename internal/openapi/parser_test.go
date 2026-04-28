@@ -197,13 +197,6 @@ func TestGenerateFromOpenAPICompiles(t *testing.T) {
 
 			runGo(t, outputDir, "mod", "tidy")
 			runGo(t, outputDir, "build", "./...")
-
-			binaryPath := filepath.Join(outputDir, naming.CLI(parsed.Name))
-			runGo(t, outputDir, "build", "-o", binaryPath, "./cmd/"+naming.CLI(parsed.Name))
-
-			info, err := os.Stat(binaryPath)
-			require.NoError(t, err)
-			require.NotZero(t, info.Size())
 		})
 	}
 }

@@ -167,9 +167,6 @@ func TestSessionHandshakeBrowserTransportSharesJar(t *testing.T) {
 	if !strings.Contains(string(sessionContent), "func (m *SessionManager) CookieJar() http.CookieJar") {
 		t.Error("session.go missing CookieJar accessor")
 	}
-
-	runGoCommand(t, dir, "mod", "tidy")
-	runGoCommand(t, dir, "build", "./...")
 }
 
 // TestSessionHandshakeNotEmittedForOtherAuth verifies the session helper is

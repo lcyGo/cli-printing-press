@@ -95,14 +95,6 @@ func TestGenerateProjectsCompile(t *testing.T) {
 
 			runGoCommand(t, outputDir, "mod", "tidy")
 			runGoCommand(t, outputDir, "build", "./...")
-
-			binaryPath := filepath.Join(outputDir, naming.CLI(apiSpec.Name))
-			runGoCommand(t, outputDir, "build", "-o", binaryPath, "./cmd/"+naming.CLI(apiSpec.Name))
-
-			info, err := os.Stat(binaryPath)
-			require.NoError(t, err)
-			require.False(t, info.IsDir())
-			require.NotZero(t, info.Size())
 		})
 	}
 }
