@@ -111,20 +111,27 @@ from another build pipeline.`,
 }
 
 // autoBundleForHost packages a host-platform .mcpb after generate.
-// Best-effort: skips silently when the module isn't ready to build (no
-// go.sum, no manifest), warns only on real build failures. Users can
-// always re-run via `printing-press bundle <dir>`.
+// Best-effort: skips silently for expected non-bundle states (no manifest,
+// no go.sum) and warns on real failures (malformed manifest, build/zip
+// errors). Users can always re-run via `printing-press bundle <dir>`.
 func autoBundleForHost(cliDir string, w io.Writer) {
 	manifestPath := filepath.Join(cliDir, pipeline.MCPBManifestFilename)
 	manifestData, err := os.ReadFile(manifestPath)
 	if err != nil {
+		// "No manifest" means generate decided this CLI doesn't ship as
+		// a bundle (cli-only readiness, no MCP). That's expected — silent.
 		return
 	}
 	var manifest pipeline.MCPBManifest
 	if err := json.Unmarshal(manifestData, &manifest); err != nil {
+		// A manifest that exists but doesn't parse is a real problem
+		// the user should know about — corruption, partial write, manual
+		// edit gone wrong. Surface it.
+		fmt.Fprintf(w, "warning: skipping bundle — manifest.json is not valid JSON: %v\n", err)
 		return
 	}
 	if manifest.Name == "" {
+		fmt.Fprintf(w, "warning: skipping bundle — manifest.json has empty name\n")
 		return
 	}
 	// Skip silently when the generated module hasn't run `go mod tidy` yet

@@ -49,13 +49,14 @@ func BuildMCPBBundle(params BundleParams) error {
 		return errors.New("manifest server.entry_point is empty")
 	}
 
-	binStat, err := os.Stat(params.BinaryPath)
+	binFile, err := os.Open(params.BinaryPath)
 	if err != nil {
 		return fmt.Errorf("locating MCP binary at %s: %w", params.BinaryPath, err)
 	}
-	binData, err := os.ReadFile(params.BinaryPath)
+	defer func() { _ = binFile.Close() }()
+	binStat, err := binFile.Stat()
 	if err != nil {
-		return fmt.Errorf("reading MCP binary: %w", err)
+		return fmt.Errorf("stat MCP binary: %w", err)
 	}
 
 	if err := os.MkdirAll(filepath.Dir(params.OutputPath), 0o755); err != nil {
@@ -69,14 +70,15 @@ func BuildMCPBBundle(params BundleParams) error {
 	defer func() { _ = out.Close() }()
 
 	zw := zip.NewWriter(out)
-	if err := writeZipEntry(zw, MCPBManifestFilename, manifestData, 0o644); err != nil {
+	if err := writeZipBytes(zw, MCPBManifestFilename, manifestData, 0o644); err != nil {
 		_ = zw.Close()
 		return fmt.Errorf("writing manifest into bundle: %w", err)
 	}
 	// Preserve executable bit so hosts that respect zip POSIX mode bits
 	// (Claude Desktop on macOS, MCP for Windows) can launch the binary
-	// directly without an extra chmod step.
-	if err := writeZipEntry(zw, manifest.Server.EntryPoint, binData, binStat.Mode()&0o777); err != nil {
+	// directly without an extra chmod step. Stream the binary rather than
+	// loading the whole thing into RAM — bundles can be 15+ MB.
+	if err := writeZipReader(zw, manifest.Server.EntryPoint, binFile, binStat.Mode()&0o777); err != nil {
 		_ = zw.Close()
 		return fmt.Errorf("writing binary into bundle: %w", err)
 	}
@@ -86,14 +88,18 @@ func BuildMCPBBundle(params BundleParams) error {
 	return nil
 }
 
-func writeZipEntry(zw *zip.Writer, name string, data []byte, mode os.FileMode) error {
+func writeZipBytes(zw *zip.Writer, name string, data []byte, mode os.FileMode) error {
+	return writeZipReader(zw, name, bytes.NewReader(data), mode)
+}
+
+func writeZipReader(zw *zip.Writer, name string, r io.Reader, mode os.FileMode) error {
 	header := &zip.FileHeader{Name: name, Method: zip.Deflate}
 	header.SetMode(mode)
 	w, err := zw.CreateHeader(header)
 	if err != nil {
 		return err
 	}
-	_, err = io.Copy(w, bytes.NewReader(data))
+	_, err = io.Copy(w, r)
 	return err
 }
 

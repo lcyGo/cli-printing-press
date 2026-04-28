@@ -27,6 +27,13 @@ const (
 // target. Matches goreleaser's default Go cross-compile matrix.
 var defaultMCPBPlatforms = []string{"darwin", "linux", "win32"}
 
+// minClaudeDesktopVersion is the minimum Claude Desktop release that
+// understands the MCPB bundle format we emit. 1.0.0 is the version that
+// introduced MCPB support (Nov 2025); bump this if we adopt schema fields
+// that older Claude Desktop releases reject. Living in one place beats
+// hunting it down across goldens and templates if/when that day comes.
+const minClaudeDesktopVersion = ">=1.0.0"
+
 // MCPBManifestFilename is the file the host (Claude Desktop, Claude Code,
 // MCP for Windows, future MCPB-aware clients) reads when installing a
 // .mcpb bundle. Spec: https://github.com/modelcontextprotocol/mcpb
@@ -178,7 +185,7 @@ func buildMCPBManifest(m CLIManifest) MCPBManifest {
 		},
 		UserConfig: buildMCPBUserConfig(m),
 		Compatibility: &MCPBCompat{
-			ClaudeDesktop: ">=1.0.0",
+			ClaudeDesktop: minClaudeDesktopVersion,
 			Platforms:     defaultMCPBPlatforms,
 		},
 	}
