@@ -222,3 +222,25 @@ paths:
       responses:
         "200":
           description: OK
+  # Exercises the path-param reclassification path: `year` is in:path, but the
+  # OpenAPI parser reclassifies date/year/month-named params to PathParam=true,
+  # Positional=false (rendered as a flag, but still substituted in the URL).
+  # This regression-tests that the MCP template emits such params into
+  # positionalParams via the .Positional || .PathParam check.
+  /reports/{year}/summary:
+    get:
+      tags: [reports]
+      operationId: getReportYearSummary
+      summary: Get a report summary for a year
+      parameters:
+        - $ref: "#/components/parameters/ApiVersion"
+        - name: year
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 2000
+            maximum: 2100
+      responses:
+        "200":
+          description: OK

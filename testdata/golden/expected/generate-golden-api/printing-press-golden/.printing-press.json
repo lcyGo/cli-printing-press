@@ -10,10 +10,10 @@
   "mcp_binary": "printing-press-golden-pp-mcp",
   "mcp_public_tool_count": 1,
   "mcp_ready": "full",
-  "mcp_tool_count": 6,
+  "mcp_tool_count": 7,
   "printing_press_version": "<PRINTING_PRESS_VERSION>",
   "schema_version": 1,
-  "spec_checksum": "sha256:afe8312a5660273a91a5ae54b4b7402a9c993b12ebf3b969fd63522f25d68836",
+  "spec_checksum": "sha256:eef12554186abf8e871a9a5bb166d23555d219de4c9b0513c1d482ecfbe34e0f",
   "spec_format": "openapi3",
   "spec_path": "testdata/golden/fixtures/golden-api.yaml",
   "spec_url": "file://testdata/golden/fixtures/golden-api.yaml"

@@ -30,7 +30,7 @@
     "example check skipped: could not build CLI binary: exit status 1"
   ],
   "naming_check": {
-    "checked": 27
+    "checked": 30
   },
   "novel_features_check": {
     "found": 0,
@@ -59,8 +59,8 @@
   "verdict": "WARN",
   "wiring_check": {
     "command_tree": {
-      "defined": 35,
-      "registered": 35
+      "defined": 38,
+      "registered": 38
     },
     "config_consistency": {
       "consistent": true

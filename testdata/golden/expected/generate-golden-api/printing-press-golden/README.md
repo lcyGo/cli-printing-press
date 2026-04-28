@@ -64,6 +64,11 @@ Manage public
 
 - **`printing-press-golden-pp-cli public get-status`** - Get public service status
 
+### reports
+
+Manage reports
+
+
 
 ## Output Formats
 

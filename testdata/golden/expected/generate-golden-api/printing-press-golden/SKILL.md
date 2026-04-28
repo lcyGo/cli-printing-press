@@ -22,6 +22,9 @@ Purpose-built fixture for golden generation coverage.
 
 - `printing-press-golden-pp-cli public` — Get public service status
 
+**reports** — Manage reports
+
+
 
 ### Finding the right command
 

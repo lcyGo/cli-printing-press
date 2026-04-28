@@ -701,6 +701,21 @@ func enrichEndpointPathParams(e *Endpoint) {
 		}
 		seen[name] = struct{}{}
 		if _, exists := declared[name]; exists {
+			// The path template wins over how the author declared the param.
+			// A placeholder like {cik} in /submissions/CIK{cik}.json is a path
+			// substitution regardless of whether the author wrote location:query
+			// or omitted location entirely. Promote the existing param so URL
+			// substitution and MCP positionalParams emission see it as such.
+			// Use PathParam=true (not Positional=true) to preserve the author's
+			// CLI-rendering intent — a param can be a flag that also fills a
+			// path slot (e.g. pagination, dates).
+			for i := range e.Params {
+				if e.Params[i].Name == name {
+					e.Params[i].PathParam = true
+					e.Params[i].Required = true
+					break
+				}
+			}
 			continue
 		}
 		e.Params = append(e.Params, Param{

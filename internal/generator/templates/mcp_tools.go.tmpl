@@ -47,7 +47,7 @@ func RegisterTools(s *server.MCPServer) {
 {{- end}}
 {{- end}}
 		),
-		makeAPIHandler({{printf "%q" (upper $endpoint.Method)}}, {{printf "%q" $endpoint.Path}}, []string{ {{- range $endpoint.Params}}{{if .Positional}}{{printf "%q" .Name}},{{end}}{{end}} }),
+		makeAPIHandler({{printf "%q" (upper $endpoint.Method)}}, {{printf "%q" $endpoint.Path}}, []string{ {{- range $endpoint.Params}}{{if or .Positional .PathParam}}{{printf "%q" .Name}},{{end}}{{end}} }),
 	)
 {{- end}}
 {{- range $subName, $subResource := $resource.SubResources}}
@@ -65,7 +65,7 @@ func RegisterTools(s *server.MCPServer) {
 {{- end}}
 {{- end}}
 		),
-		makeAPIHandler({{printf "%q" (upper $endpoint.Method)}}, {{printf "%q" $endpoint.Path}}, []string{ {{- range $endpoint.Params}}{{if .Positional}}{{printf "%q" .Name}},{{end}}{{end}} }),
+		makeAPIHandler({{printf "%q" (upper $endpoint.Method)}}, {{printf "%q" $endpoint.Path}}, []string{ {{- range $endpoint.Params}}{{if or .Positional .PathParam}}{{printf "%q" .Name}},{{end}}{{end}} }),
 	)
 {{- end}}
 {{- end}}

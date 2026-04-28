@@ -68,6 +68,13 @@ func RegisterTools(s *server.MCPServer) {
 		),
 		makeAPIHandler("GET", "/public/status", []string{ }),
 	)
+	s.AddTool(
+		mcplib.NewTool("reports_summary_get-report-year",
+			mcplib.WithDescription("Get a report summary for a year"),
+			mcplib.WithString("year", mcplib.Required(), mcplib.Description("Year")),
+		),
+		makeAPIHandler("GET", "/reports/{year}/summary", []string{"year", }),
+	)
 	// Sync tool — populates local database for offline search and sql queries
 	s.AddTool(
 		mcplib.NewTool("sync",
@@ -276,7 +283,7 @@ func handleContext(_ context.Context, _ mcplib.CallToolRequest) (*mcplib.CallToo
 		"api":         "printing-press-golden",
 		"description": "Purpose-built fixture for golden generation coverage.",
 		"archetype":   "project-management",
-		"tool_count":  6,
+		"tool_count":  7,
 		"auth": map[string]any{
 			"type": "api_key",
 			"env_vars": []string{"PRINTING_PRESS_GOLDEN_API_KEY_AUTH",  },
@@ -293,6 +300,11 @@ func handleContext(_ context.Context, _ mcplib.CallToolRequest) (*mcplib.CallToo
 				"name": "public",
 				"description": "Manage public",
 				"endpoints": []string{"get-status",  },
+			},
+			{
+				"name": "reports",
+				"description": "Manage reports",
+				"endpoints": []string{ },
 			},
 		},
 		"query_tips": []string{

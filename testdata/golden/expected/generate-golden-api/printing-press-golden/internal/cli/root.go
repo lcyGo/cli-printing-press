@@ -136,6 +136,7 @@ Run 'printing-press-golden-pp-cli doctor' to verify auth and connectivity.`,
 		return nil
 	}
 	rootCmd.AddCommand(newProjectsCmd(&flags))
+	rootCmd.AddCommand(newReportsCmd(&flags))
 	rootCmd.AddCommand(newDoctorCmd(&flags))
 	rootCmd.AddCommand(newAuthCmd(&flags))
 	rootCmd.AddCommand(newAgentContextCmd(rootCmd))

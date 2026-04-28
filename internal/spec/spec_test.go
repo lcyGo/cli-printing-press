@@ -612,6 +612,111 @@ resources:
 	assert.Contains(t, items.Endpoints, "fallback")
 }
 
+func TestEnrichEndpointPathParams(t *testing.T) {
+	t.Run("placeholder not declared adds positional param", func(t *testing.T) {
+		input := `
+name: demo
+base_url: http://x
+auth: {type: none}
+resources:
+  filings:
+    description: SEC filings
+    endpoints:
+      get:
+        method: GET
+        path: /submissions/CIK{cik}.json
+`
+		s, err := ParseBytes([]byte(input))
+		require.NoError(t, err)
+		params := s.Resources["filings"].Endpoints["get"].Params
+		require.Len(t, params, 1)
+		assert.Equal(t, "cik", params[0].Name)
+		assert.True(t, params[0].Positional, "auto-injected placeholder should be positional")
+		assert.True(t, params[0].Required, "path placeholder must be required")
+		assert.False(t, params[0].PathParam, "auto-injected uses Positional, not PathParam")
+	})
+
+	t.Run("placeholder declared as flag is promoted to PathParam", func(t *testing.T) {
+		// Reproduces the company-goat bug: spec author declares a param without
+		// location:path (or with location:query) while the path template uses
+		// {name} as a substitution. Path template wins; existing param must be
+		// promoted to PathParam=true so URL substitution and MCP positionalParams
+		// emission see it.
+		input := `
+name: demo
+base_url: http://x
+auth: {type: none}
+resources:
+  filings:
+    description: SEC filings
+    endpoints:
+      get:
+        method: GET
+        path: /submissions/CIK{cik}.json
+        params:
+          - name: cik
+            type: string
+            description: 10-digit zero-padded SEC Central Index Key
+`
+		s, err := ParseBytes([]byte(input))
+		require.NoError(t, err)
+		params := s.Resources["filings"].Endpoints["get"].Params
+		require.Len(t, params, 1, "should not duplicate the existing param")
+		assert.Equal(t, "cik", params[0].Name)
+		assert.True(t, params[0].PathParam, "declared param matching {placeholder} must be promoted to PathParam=true")
+		assert.True(t, params[0].Required, "path placeholder must be required")
+		assert.Equal(t, "10-digit zero-padded SEC Central Index Key", params[0].Description, "author description preserved")
+	})
+
+	t.Run("repeated placeholder is enriched once", func(t *testing.T) {
+		input := `
+name: demo
+base_url: http://x
+auth: {type: none}
+resources:
+  duplicates:
+    description: weird API
+    endpoints:
+      twice:
+        method: GET
+        path: /a/{x}/b/{x}
+`
+		s, err := ParseBytes([]byte(input))
+		require.NoError(t, err)
+		params := s.Resources["duplicates"].Endpoints["twice"].Params
+		require.Len(t, params, 1)
+		assert.Equal(t, "x", params[0].Name)
+	})
+
+	t.Run("body param with same name as placeholder still triggers promotion path", func(t *testing.T) {
+		// If the author declared a body param called "id" AND the path has {id},
+		// today's behavior skips. After fix: still skip (the body param is the
+		// authoritative declaration), but downstream code must handle the URL
+		// substitution another way. This test pins existing behavior so we don't
+		// silently change it.
+		input := `
+name: demo
+base_url: http://x
+auth: {type: none}
+resources:
+  things:
+    description: things
+    endpoints:
+      update:
+        method: PATCH
+        path: /things/{id}
+        body:
+          - name: id
+            type: string
+`
+		s, err := ParseBytes([]byte(input))
+		require.NoError(t, err)
+		params := s.Resources["things"].Endpoints["update"].Params
+		// id is in body, not promoted in params — pinning current behavior.
+		assert.Empty(t, params, "params should remain empty when placeholder is declared in body")
+	})
+}
+
 func TestExtraCommandsParse(t *testing.T) {
 	input := `
 name: demo
