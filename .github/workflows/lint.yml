@@ -1,4 +1,4 @@
-name: Lint
+name: CI
 
 on:
   pull_request:
@@ -62,7 +62,7 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
 
@@ -73,4 +73,113 @@ jobs:
           cache-dependency-path: go.sum
 
       - name: Run Go tests
-        run: go test ./...
+        shell: bash
+        run: |
+          set -o pipefail
+
+          go test -short -json -timeout 12m ./... 2>&1 | tee /tmp/go-test.json
+          status=${PIPESTATUS[0]}
+
+          python3 - /tmp/go-test.json <<'PY'
+          import json
+          import sys
+
+          packages = {}
+          tests = 0
+          with open(sys.argv[1]) as events:
+            for line in events:
+              try:
+                  event = json.loads(line)
+              except Exception:
+                  continue
+              if event.get("Action") == "pass" and event.get("Test"):
+                  tests += 1
+              if event.get("Action") in {"pass", "fail"} and event.get("Test") is None:
+                  packages[event["Package"]] = event.get("Elapsed", 0)
+
+          print("Slowest Go packages:")
+          for pkg, elapsed in sorted(packages.items(), key=lambda item: -item[1])[:15]:
+              print(f"{elapsed:6.1f}s {pkg}")
+          print(f"test_pass_events {tests}")
+          PY
+
+          exit "$status"
+
+  generated-test:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check whether full generated tests are needed
+        id: changes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git fetch --no-tags --prune origin "${{ github.base_ref }}"
+          mapfile -t changed < <(git diff --name-only --diff-filter=ACMR "origin/${{ github.base_ref }}...HEAD")
+
+          echo "Changed files:"
+          printf '  %s\n' "${changed[@]}"
+
+          needs_full=false
+          for file in "${changed[@]}"; do
+            case "$file" in
+              .github/workflows/lint.yml|go.mod|go.sum|cmd/*|catalog/*|internal/cli/*|internal/generator/*|internal/openapi/*|internal/pipeline/*|internal/spec/*|testdata/*)
+                needs_full=true
+                break
+                ;;
+            esac
+          done
+
+          echo "needs_full=$needs_full" >> "$GITHUB_OUTPUT"
+
+      - name: Skip full generated tests
+        if: steps.changes.outputs.needs_full != 'true'
+        run: |
+          echo "Skipping full generated tests: no generator, parser, pipeline, CLI, module, workflow, catalog, or testdata changes."
+
+      - uses: actions/setup-go@v6
+        if: steps.changes.outputs.needs_full == 'true'
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Run full Go tests
+        if: steps.changes.outputs.needs_full == 'true'
+        shell: bash
+        run: |
+          set -o pipefail
+
+          go test -json -timeout 12m ./... 2>&1 | tee /tmp/go-test-full.json
+          status=${PIPESTATUS[0]}
+
+          python3 - /tmp/go-test-full.json <<'PY'
+          import json
+          import sys
+
+          packages = {}
+          tests = 0
+          with open(sys.argv[1]) as events:
+            for line in events:
+              try:
+                  event = json.loads(line)
+              except Exception:
+                  continue
+              if event.get("Action") == "pass" and event.get("Test"):
+                  tests += 1
+              if event.get("Action") in {"pass", "fail"} and event.get("Test") is None:
+                  packages[event["Package"]] = event.get("Elapsed", 0)
+
+          print("Slowest Go packages:")
+          for pkg, elapsed in sorted(packages.items(), key=lambda item: -item[1])[:15]:
+              print(f"{elapsed:6.1f}s {pkg}")
+          print(f"test_pass_events {tests}")
+          PY
+
+          exit "$status"

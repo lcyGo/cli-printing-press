@@ -168,6 +168,9 @@ resources:
 
 func TestGenerateFromOpenAPICompiles(t *testing.T) {
 	t.Parallel()
+	if testing.Short() {
+		t.Skip("OpenAPI generated CLI compile coverage runs in the generated-test CI lane")
+	}
 
 	tests := []struct {
 		name     string
@@ -178,6 +181,7 @@ func TestGenerateFromOpenAPICompiles(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt //nolint:modernize // keep the parallel subtest capture explicit
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 

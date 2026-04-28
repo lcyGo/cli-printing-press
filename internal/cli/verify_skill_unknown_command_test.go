@@ -16,6 +16,8 @@ import (
 // path (`<cli> qr get-qrcode`) for a resource the cobra source actually
 // registers as a leaf (`<cli> qr`) is rejected.
 func TestVerifySkill_DetectsUnknownCommand(t *testing.T) {
+	t.Parallel()
+
 	bin := buildPrintingPressBinary(t)
 	dir := t.TempDir()
 
@@ -68,6 +70,8 @@ description: "fixture"
 // negative case: a SKILL whose command-reference paths all map to real
 // cobra Use: declarations passes the unknown-command check.
 func TestVerifySkill_UnknownCommandPassesWhenAllPathsResolve(t *testing.T) {
+	t.Parallel()
+
 	bin := buildPrintingPressBinary(t)
 	dir := t.TempDir()
 
@@ -112,6 +116,8 @@ description: "fixture"
 // built-in commands (help, completion, version) are whitelisted — references
 // to `<cli> help` in SKILL.md must NOT fire unknown-command.
 func TestVerifySkill_UnknownCommandSkipsBuiltins(t *testing.T) {
+	t.Parallel()
+
 	bin := buildPrintingPressBinary(t)
 	dir := t.TempDir()
 

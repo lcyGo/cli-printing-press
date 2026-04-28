@@ -13,6 +13,8 @@ import (
 // session.go helper and wires it into the client when auth.type is
 // "session_handshake". This is the WU-2 acceptance test (retro issue #174).
 func TestSessionHandshakeGeneration(t *testing.T) {
+	t.Parallel()
+
 	sp := &spec.APISpec{
 		Name:        "demo",
 		Version:     "1.0.0",
@@ -104,6 +106,8 @@ func TestSessionHandshakeGeneration(t *testing.T) {
 }
 
 func TestSessionHandshakeBrowserTransportSharesJar(t *testing.T) {
+	t.Parallel()
+
 	sp := &spec.APISpec{
 		Name:          "demo",
 		Version:       "1.0.0",
@@ -171,6 +175,8 @@ func TestSessionHandshakeBrowserTransportSharesJar(t *testing.T) {
 // TestSessionHandshakeNotEmittedForOtherAuth verifies the session helper is
 // NOT emitted for non-session auth types — no file bloat for bearer_token CLIs.
 func TestSessionHandshakeNotEmittedForOtherAuth(t *testing.T) {
+	t.Parallel()
+
 	sp := &spec.APISpec{
 		Name:        "demo",
 		Version:     "1.0.0",

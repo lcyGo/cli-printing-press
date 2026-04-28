@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 )
 
 type EndpointGroup struct {
@@ -18,6 +19,7 @@ var (
 	uuidSegmentPattern  = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 	hashSegmentPattern  = regexp.MustCompile(`(?i)^[0-9a-f]{32,}$`)
 	numericPattern      = regexp.MustCompile(`^\d+$`)
+	blocklistMu         sync.RWMutex
 	additionalBlocklist []string
 )
 
@@ -25,7 +27,11 @@ func ClassifyEntries(entries []EnrichedEntry) (api []EnrichedEntry, noise []Enri
 	api = make([]EnrichedEntry, 0, len(entries))
 	noise = make([]EnrichedEntry, 0, len(entries))
 
-	blocklist := append(DefaultBlocklist(), additionalBlocklist...)
+	blocklistMu.RLock()
+	extraBlocklist := append([]string(nil), additionalBlocklist...)
+	blocklistMu.RUnlock()
+
+	blocklist := append(DefaultBlocklist(), extraBlocklist...)
 	for _, entry := range entries {
 		score := scoreEntry(entry, blocklist)
 		classified := entry
@@ -45,6 +51,9 @@ func ClassifyEntries(entries []EnrichedEntry) (api []EnrichedEntry, noise []Enri
 }
 
 func SetAdditionalBlocklist(domains []string) {
+	blocklistMu.Lock()
+	defer blocklistMu.Unlock()
+
 	additionalBlocklist = append([]string(nil), domains...)
 }
 

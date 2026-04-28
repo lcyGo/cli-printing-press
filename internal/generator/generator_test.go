@@ -71,7 +71,10 @@ func TestGenerateProjectsCompile(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		tt := tt //nolint:modernize // keep the parallel subtest capture explicit
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
 			apiSpec, err := spec.Parse(tt.specPath)
 			require.NoError(t, err)
 
@@ -522,6 +525,14 @@ func countFiles(t *testing.T, root string) int {
 }
 
 func runGoCommand(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	if testing.Short() && len(args) > 0 && (args[0] == "build" || args[0] == "test") {
+		t.Skip("generated CLI compile tests run in the full generated-test CI lane")
+	}
+	runGoCommandRequired(t, dir, args...)
+}
+
+func runGoCommandRequired(t *testing.T, dir string, args ...string) {
 	t.Helper()
 
 	// Generated-project compile tests exercise module resolution via -mod=mod;
@@ -1039,6 +1050,8 @@ func TestGenerateHTMLExtractionPerModeGating(t *testing.T) {
 	}
 
 	t.Run("embedded-json-only omits page+links helpers", func(t *testing.T) {
+		t.Parallel()
+
 		dir := filepath.Join(t.TempDir(), "ejonly-pp-cli")
 		require.NoError(t, New(specWithMode("ejonly", spec.HTMLExtractModeEmbeddedJSON), dir).Generate())
 		body := read(t, dir)
@@ -1064,6 +1077,8 @@ func TestGenerateHTMLExtractionPerModeGating(t *testing.T) {
 	})
 
 	t.Run("page-only omits embedded-json helpers", func(t *testing.T) {
+		t.Parallel()
+
 		dir := filepath.Join(t.TempDir(), "pageonly-pp-cli")
 		require.NoError(t, New(specWithMode("pageonly", spec.HTMLExtractModePage), dir).Generate())
 		body := read(t, dir)
@@ -1082,6 +1097,8 @@ func TestGenerateHTMLExtractionPerModeGating(t *testing.T) {
 	})
 
 	t.Run("mixed modes emit both branches", func(t *testing.T) {
+		t.Parallel()
+
 		// One endpoint per mode in the same spec.
 		mixedSpec := &spec.APISpec{
 			Name:    "mixed",

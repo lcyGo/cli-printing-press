@@ -17,6 +17,8 @@ import (
 // `printing-press verify-skill` catches it at generation time instead of
 // letting it ship to the library.
 func TestVerifySkill_DetectsWrongFlagOnCommand(t *testing.T) {
+	t.Parallel()
+
 	bin := buildPrintingPressBinary(t)
 	dir := t.TempDir()
 
@@ -82,6 +84,8 @@ fixture-pp-cli search "chicken" --max-time 30m
 // the verifier does NOT report a false-positive flag-commands finding
 // when the SKILL example uses a flag declared on the top-level command.
 func TestVerifySkill_NoFalsePositiveOnSharedLeafName(t *testing.T) {
+	t.Parallel()
+
 	bin := buildPrintingPressBinary(t)
 	dir := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "internal", "cli"), 0o755))
@@ -146,6 +150,8 @@ func newProfileSaveCmd() *cobra.Command {
 // TestVerifySkill_PassesWhenSkillMatches confirms the verifier doesn't
 // false-positive on a well-formed CLI.
 func TestVerifySkill_PassesWhenSkillMatches(t *testing.T) {
+	t.Parallel()
+
 	bin := buildPrintingPressBinary(t)
 	dir := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "internal", "cli"), 0o755))
@@ -169,6 +175,8 @@ func newSearchCmd() *cobra.Command {
 
 // TestVerifySkill_RejectsMissingInputs confirms usage errors (code 2).
 func TestVerifySkill_RejectsMissingInputs(t *testing.T) {
+	t.Parallel()
+
 	bin := buildPrintingPressBinary(t)
 
 	// Missing --dir
