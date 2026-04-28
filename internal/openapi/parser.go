@@ -17,6 +17,7 @@ import (
 	"github.com/mvanhorn/cli-printing-press/v2/internal/spec"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
+	"golang.org/x/text/unicode/norm"
 )
 
 var (
@@ -2669,11 +2670,37 @@ func toKebabCase(input string) string {
 	return strings.Trim(b.String(), "-")
 }
 
+// asciiFold decomposes accented Latin characters and drops the combining
+// marks, leaving the ASCII base. "Pokémon" → "Pokemon", "café" → "cafe".
+// Non-Latin scripts pass through unchanged; the surrounding cleanSpecName
+// loop will drop them when they don't satisfy unicode.IsLetter / IsDigit
+// after this fold (e.g., "東京 API" → "api"), which matches today's
+// behavior for spec titles without ASCII tokens.
+func asciiFold(s string) string {
+	decomposed := norm.NFD.String(s)
+	var b strings.Builder
+	b.Grow(len(decomposed))
+	for _, r := range decomposed {
+		if unicode.Is(unicode.Mn, r) {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
 func cleanSpecName(title string) string {
 	title = strings.ToLower(strings.TrimSpace(title))
 	if title == "" {
 		return "api"
 	}
+
+	// ASCII-fold accented letters so "Pok\u00e9mon API" becomes "pokemon api"
+	// instead of "pok\u00e9mon api". Without this, the slug retains non-ASCII
+	// characters, which then drift through to directory names, binary
+	// names, and Cobra command paths \u2014 producing spurious cmd dirs on
+	// regen and breaking import paths on case-folding filesystems.
+	title = asciiFold(title)
 
 	title = strings.ReplaceAll(title, "open api", " ")
 

@@ -423,6 +423,14 @@ func TestCleanSpecName(t *testing.T) {
 		{title: "Domino\u2019s Pizza API", want: "dominos-pizza"},
 		// Multiple apostrophes
 		{title: "Rock'n'Roll API", want: "rocknroll"},
+		// Accented Latin characters get ASCII-folded so the slug stays
+		// portable across filesystems and Go import paths. Without folding,
+		// the spec title "Pok\u00e9mon API" produced the slug "pok\u00e9mon" and
+		// regen emitted spurious cmd/pok\u00e9mon-pp-{cli,mcp}/ alongside the
+		// directory's actual cmd/pokemon-pp-{cli,mcp}/.
+		{title: "Pok\u00e9mon API", want: "pokemon"},
+		{title: "Caf\u00e9 Reservations", want: "cafe-reservations"},
+		{title: "Na\u00efve Bayes API", want: "naive-bayes"},
 	}
 
 	for _, tt := range tests {
