@@ -114,6 +114,23 @@ if [ -n "$SPEC_PATH" ]; then
 fi
 ```
 
+### Divergence check
+
+The internal copy at `$CLI_DIR` can drift from the public library (`mvanhorn/printing-press-library`) copy if anyone edited the public repo directly after this CLI was last published. Polishing a stale internal copy and re-publishing later would overwrite those public-only fixes.
+
+Find the public library clone on the user's machine. Honor `$PRINTING_PRESS_LIBRARY_PUBLIC` if set, otherwise locate a clone however fits this platform. Validate by checking the git remote points at `mvanhorn/printing-press-library` — other directories may share the name (forks, accidental name collisions). If multiple valid clones exist, prefer the most recently modified; ask the user to disambiguate only if still unclear.
+
+Outcomes:
+
+- **No clone found** → user doesn't have public locally; proceed silently on internal.
+- **Clone found but doesn't contain this CLI** → never published or under a different name; proceed silently on internal.
+- **Found and `diff -r` is empty** → in sync; proceed silently on internal.
+- **Found and divergent** → don't compute "which side is newer" (file mtimes lie, internal isn't a git repo). Show the user the divergent files and ask via AskUserQuestion: **sync public→internal**, or **proceed without syncing**. If the user picks sync, copy public's version of the divergent files into internal, then continue polish.
+
+Before showing the sync prompt, check whether internal has files modified after its `.printing-press.json` timestamp (the user has been polishing locally without publishing). If yes, hedge the prompt explicitly: syncing will overwrite their pending local work. Let them decide whether to keep their local edits or pull public's.
+
+After sync (or skip), the rest of polish operates on `$CLI_DIR` as canonical. The eventual `/printing-press-publish` step pushes internal back to public; no second divergence check is needed there.
+
 ## Phase 1: Baseline diagnostics
 
 ```bash
