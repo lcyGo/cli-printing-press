@@ -808,6 +808,31 @@ func TestWriteMCPBManifestPreservesExistingDescription(t *testing.T) {
 	})
 }
 
+func TestRefreshCLIManifestFromSpecRefreshesDisplayName(t *testing.T) {
+	// RefreshCLIManifestFromSpec must overwrite an existing
+	// DisplayName, not preserve it — otherwise stale slug-derived
+	// values survive across mcp-sync cycles.
+	dir := t.TempDir()
+	writeManifest(t, dir, CLIManifest{
+		APIName:     "cal-com",
+		DisplayName: "Cal Com", // stale slug-derived value
+		MCPBinary:   "cal-com-pp-mcp",
+		MCPReady:    "full",
+	})
+	parsed := &spec.APISpec{
+		Name:        "cal-com",
+		DisplayName: "Cal.com", // authoritative value from upstream preservation
+	}
+
+	require.NoError(t, RefreshCLIManifestFromSpec(dir, parsed))
+
+	data, err := os.ReadFile(filepath.Join(dir, CLIManifestFilename))
+	require.NoError(t, err)
+	var got CLIManifest
+	require.NoError(t, json.Unmarshal(data, &got))
+	assert.Equal(t, "Cal.com", got.DisplayName)
+}
+
 func writeManifest(t *testing.T, dir string, m CLIManifest) {
 	t.Helper()
 	data, err := json.Marshal(m)

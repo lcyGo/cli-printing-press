@@ -245,9 +245,10 @@ func populateMCPMetadata(m *CLIManifest, parsed *spec.APISpec) {
 	m.AuthEnvVars = parsed.Auth.EnvVars
 	m.AuthKeyURL = parsed.Auth.KeyURL
 	m.AuthOptional = parsed.Auth.Optional
-	if m.DisplayName == "" {
-		m.DisplayName = parsed.EffectiveDisplayName()
-	}
+	// Always refresh from parsed; an empty-check here would let a
+	// stale .printing-press.json overwrite the spec on the next
+	// mcp-sync cycle.
+	m.DisplayName = parsed.EffectiveDisplayName()
 }
 
 // GenerateManifestParams holds the information available at generate time
