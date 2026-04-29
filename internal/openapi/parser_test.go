@@ -427,10 +427,23 @@ func TestCleanSpecName(t *testing.T) {
 		// portable across filesystems and Go import paths. Without folding,
 		// the spec title "Pok\u00e9mon API" produced the slug "pok\u00e9mon" and
 		// regen emitted spurious cmd/pok\u00e9mon-pp-{cli,mcp}/ alongside the
-		// directory's actual cmd/pokemon-pp-{cli,mcp}/.
+		// directory's actual cmd/pokemon-pp-{cli,mcp}/. Two flavors:
+		// precomposed accents (NFD-decomposable: \u00e9, \u00ef, \u00f3, \u00e4, ...) and
+		// fused-diacritic Latin letters (non-decomposable: \u00f8, \u00df, \u00e6, \u0142,
+		// \u0111, \u00fe, \u00f0, \u0153, \u0131), which need an explicit replacement table.
 		{title: "Pok\u00e9mon API", want: "pokemon"},
 		{title: "Caf\u00e9 Reservations", want: "cafe-reservations"},
 		{title: "Na\u00efve Bayes API", want: "naive-bayes"},
+		{title: "Gro\u00dfhandel API", want: "grosshandel"},
+		{title: "Encyclop\u00e6dia API", want: "encyclopaedia"},
+		{title: "\u00d8rsted Energy", want: "orsted-energy"},
+		{title: "\u0141\u00f3d\u017a Transit", want: "lodz-transit"},
+		{title: "\u00deingvellir Tours", want: "thingvellir-tours"},
+		// Non-Latin scripts are out of scope for the fold and survive
+		// into the slug today. This test pins that behavior so a future
+		// "transliterate everything to ASCII" change is visible in the
+		// diff rather than accidental. See asciiFold's godoc.
+		{title: "\u6771\u4eac API", want: "\u6771\u4eac"},
 	}
 
 	for _, tt := range tests {

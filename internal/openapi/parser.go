@@ -2670,13 +2670,45 @@ func toKebabCase(input string) string {
 	return strings.Trim(b.String(), "-")
 }
 
-// asciiFold decomposes accented Latin characters and drops the combining
-// marks, leaving the ASCII base. "Pokémon" → "Pokemon", "café" → "cafe".
-// Non-Latin scripts pass through unchanged; the surrounding cleanSpecName
-// loop will drop them when they don't satisfy unicode.IsLetter / IsDigit
-// after this fold (e.g., "東京 API" → "api"), which matches today's
-// behavior for spec titles without ASCII tokens.
+// latinNonDecomposable maps Latin-script letters that NFD does not
+// decompose into base + combining mark. NFD handles precomposed accents
+// (é → e + ◌́), but characters where the diacritic is fused into the
+// codepoint itself (ø, ß, æ, ł, đ, þ, ð, ı) need an explicit replacement
+// to reach ASCII. Keys are lowercase only because cleanSpecName
+// lowercases its input before calling asciiFold.
+var latinNonDecomposable = strings.NewReplacer(
+	"ø", "o", // Norwegian/Danish o with stroke (Ørsted)
+	"ß", "ss", // German sharp s (Großhandel)
+	"æ", "ae", // ash (Encyclopædia)
+	"œ", "oe", // French oe ligature (cœur)
+	"ł", "l", // Polish l with stroke (Łódź)
+	"đ", "d", // Croatian/Vietnamese d with stroke (Đorđević)
+	"þ", "th", // Icelandic thorn (Þingvellir)
+	"ð", "d", // Icelandic eth (Friðrik)
+	"ı", "i", // Turkish dotless i
+)
+
+// asciiFold maps Latin-script titles to ASCII so the slug stays portable
+// across filesystems, Go import paths, and Cobra command names.
+// "Pokémon" → "pokemon", "café" → "cafe", "Großhandel" → "grosshandel",
+// "Łódź" → "lodz". Two passes:
+//
+//  1. latinNonDecomposable replaces Latin letters whose diacritic is
+//     fused into the codepoint (NFD won't split them).
+//  2. norm.NFD decomposes precomposed accents into base + combining
+//     marks, and the loop drops the combining marks (category Mn).
+//
+// Scope is intentionally Latin-only. Non-Latin scripts (Greek δ,
+// Cyrillic русский, CJK 東京, Arabic …) survive both passes because
+// they don't decompose into Latin bases and because cleanSpecName's
+// downstream loop accepts any Unicode letter via unicode.IsLetter.
+// That means "東京 API" produces a slug of "東京" — non-ASCII surfaces
+// in directory names, Go import paths, and Cobra commands the same
+// way pokémon did before this fold. Transliterating non-Latin scripts
+// to ASCII is opinionated (Tokyo? Tōkyō? Toukyou?) and a separate
+// concern; this fold deliberately does not attempt it.
 func asciiFold(s string) string {
+	s = latinNonDecomposable.Replace(s)
 	decomposed := norm.NFD.String(s)
 	var b strings.Builder
 	b.Grow(len(decomposed))
