@@ -1558,27 +1558,8 @@ func checkExamples(dir string) ExampleCheckResult {
 }
 
 func discoverExampleCheckCommands(binaryPath string) ([][]string, error) {
-	// Use Output() rather than the shared runDogfoodCmd which calls
-	// CombinedOutput. agent-context emits JSON to stdout; any stderr
-	// leak (deprecation warnings, config-load notices, panics that
-	// race with the JSON write) ends up prefixed to stdout in
-	// CombinedOutput and breaks json.Unmarshal with "invalid character
-	// 'E' looking for beginning of value" or similar.
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, binaryPath, "agent-context")
-	out, err := cmd.Output()
-	if ctx.Err() == context.DeadlineExceeded {
-		return nil, fmt.Errorf("agent-context timed out after 15s")
-	}
+	out, err := runStdoutOnly(binaryPath, 15*time.Second, "agent-context")
 	if err != nil {
-		// Surface stderr in the error so the dogfood "Examples" check's
-		// skip-detail line tells the user what actually broke rather
-		// than just "exit status 1".
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && len(exitErr.Stderr) > 0 {
-			return nil, fmt.Errorf("agent-context failed: %s", strings.TrimSpace(string(exitErr.Stderr)))
-		}
 		return nil, fmt.Errorf("agent-context failed: %w", err)
 	}
 	paths, err := dogfoodExampleCommandPathsFromAgentContext(out)
@@ -1589,6 +1570,31 @@ func discoverExampleCheckCommands(binaryPath string) ([][]string, error) {
 		paths = sampleEvenlyCommandPaths(paths, 10)
 	}
 	return paths, nil
+}
+
+// runStdoutOnly runs binaryPath with args and returns stdout. Unlike
+// runDogfoodCmd, stderr is captured separately so a leaky printed CLI
+// (deprecation warnings, config-load notices, panics that race with
+// stdout writes) doesn't prefix the JSON consumers expect to parse.
+// On non-zero exit, the trimmed stderr surfaces in the error so
+// callers can surface a meaningful "what broke" instead of "exit
+// status 1".
+func runStdoutOnly(binaryPath string, timeout time.Duration, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, binaryPath, args...)
+	out, err := cmd.Output()
+	if ctx.Err() == context.DeadlineExceeded {
+		return nil, fmt.Errorf("timed out after %s", timeout)
+	}
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && len(exitErr.Stderr) > 0 {
+			return nil, fmt.Errorf("%s", strings.TrimSpace(string(exitErr.Stderr)))
+		}
+		return nil, err
+	}
+	return out, nil
 }
 
 func dogfoodExampleCommandPathsFromAgentContext(data []byte) ([][]string, error) {

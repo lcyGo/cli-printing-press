@@ -267,11 +267,11 @@ func pickFeatures(r *ResearchResult) []NovelFeature {
 }
 
 func pickGeneratedCommandFeatures(binaryPath string) ([]NovelFeature, error) {
-	out, err := runDogfoodCmd(binaryPath, 15*time.Second, "agent-context")
+	out, err := runStdoutOnly(binaryPath, 15*time.Second, "agent-context")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("agent-context failed: %w", err)
 	}
-	paths, err := dogfoodExampleCommandPathsFromAgentContext([]byte(out))
+	paths, err := dogfoodExampleCommandPathsFromAgentContext(out)
 	if err != nil {
 		return nil, err
 	}
