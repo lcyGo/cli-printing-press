@@ -4414,6 +4414,91 @@ func TestGeneratedOutput_PromotedCommandCompiles(t *testing.T) {
 	runGoCommand(t, outputDir, "build", "./...")
 }
 
+func TestGeneratedOutput_ResourceParentsHiddenWhenAPIBrowserGenerated(t *testing.T) {
+	t.Parallel()
+
+	// Multi-endpoint resource -> parent group; single-endpoint resource -> promoted command.
+	// The promoted command's presence is what triggers api_discovery.go emission, and the
+	// api browser's RunE filters on child.Hidden. Without this fix the browser was empty by
+	// construction (issue #872).
+	apiSpec := &spec.APISpec{
+		Name:    "hiddentest",
+		Version: "0.1.0",
+		BaseURL: "https://api.example.com",
+		Auth:    spec.AuthConfig{Type: "api_key", Header: "X-Api-Key", EnvVars: []string{"HT_API_KEY"}},
+		Config:  spec.ConfigSpec{Format: "toml", Path: "~/.config/hiddentest-pp-cli/config.toml"},
+		Resources: map[string]spec.Resource{
+			"orders": {
+				Description: "Manage orders",
+				Endpoints: map[string]spec.Endpoint{
+					"list":   {Method: "GET", Path: "/orders", Description: "List orders"},
+					"create": {Method: "POST", Path: "/orders", Description: "Create order"},
+				},
+			},
+			"customers": {
+				Description: "Single-endpoint customers resource (gets promoted)",
+				Endpoints: map[string]spec.Endpoint{
+					"list": {Method: "GET", Path: "/customers", Description: "List customers"},
+				},
+			},
+		},
+	}
+
+	outputDir := filepath.Join(t.TempDir(), "hiddentest-pp-cli")
+	gen := New(apiSpec, outputDir)
+	require.NoError(t, gen.Generate())
+
+	require.FileExists(t, filepath.Join(outputDir, "internal", "cli", "api_discovery.go"))
+	require.FileExists(t, filepath.Join(outputDir, "internal", "cli", "promoted_customers.go"))
+
+	orders, err := os.ReadFile(filepath.Join(outputDir, "internal", "cli", "orders.go"))
+	require.NoError(t, err)
+	assert.Contains(t, string(orders), "Hidden: true",
+		"raw resource parent must be Hidden so the api browser finds it")
+}
+
+func TestGeneratedOutput_ResourceParentsNotHiddenWithoutAPIBrowser(t *testing.T) {
+	t.Parallel()
+
+	// Without any single-endpoint resource to promote, api_discovery.go is not generated;
+	// hiding the resources in that case would just collapse --help without giving users
+	// a way to list them, so the parent files stay visible.
+	apiSpec := &spec.APISpec{
+		Name:    "novisibletest",
+		Version: "0.1.0",
+		BaseURL: "https://api.example.com",
+		Auth:    spec.AuthConfig{Type: "api_key", Header: "X-Api-Key", EnvVars: []string{"NV_API_KEY"}},
+		Config:  spec.ConfigSpec{Format: "toml", Path: "~/.config/novisibletest-pp-cli/config.toml"},
+		Resources: map[string]spec.Resource{
+			"orders": {
+				Description: "Manage orders",
+				Endpoints: map[string]spec.Endpoint{
+					"list":   {Method: "GET", Path: "/orders", Description: "List orders"},
+					"create": {Method: "POST", Path: "/orders", Description: "Create order"},
+				},
+			},
+			"items": {
+				Description: "Manage items",
+				Endpoints: map[string]spec.Endpoint{
+					"list":   {Method: "GET", Path: "/items", Description: "List items"},
+					"create": {Method: "POST", Path: "/items", Description: "Create item"},
+				},
+			},
+		},
+	}
+
+	outputDir := filepath.Join(t.TempDir(), "novisibletest-pp-cli")
+	gen := New(apiSpec, outputDir)
+	require.NoError(t, gen.Generate())
+
+	assert.NoFileExists(t, filepath.Join(outputDir, "internal", "cli", "api_discovery.go"))
+
+	orders, err := os.ReadFile(filepath.Join(outputDir, "internal", "cli", "orders.go"))
+	require.NoError(t, err)
+	assert.NotContains(t, string(orders), "Hidden: true",
+		"raw resource parent must not be Hidden when no api browser is generated")
+}
+
 func TestGeneratedOutput_PromotedCommandNotForBuiltins(t *testing.T) {
 	t.Parallel()
 
@@ -5302,8 +5387,13 @@ func TestGenerateGraphQLBFFUsesSemanticCommandSurface(t *testing.T) {
 	runGoCommand(t, outputDir, "build", "-o", binaryPath, "./cmd/example-pp-cli")
 	helpOut, err := exec.Command(binaryPath, "--help").CombinedOutput()
 	require.NoError(t, err, string(helpOut))
-	assert.Contains(t, string(helpOut), "products")
+	// Multi-endpoint resources are now Hidden so the generated `api` browser can
+	// surface them; --help stays curated. Direct invocation and the api browser
+	// listing must both still work.
 	assert.NotContains(t, string(helpOut), "graphql")
+	apiOut, err := exec.Command(binaryPath, "api").CombinedOutput()
+	require.NoError(t, err, string(apiOut))
+	assert.Contains(t, string(apiOut), "products")
 	productsHelp, err := exec.Command(binaryPath, "products", "--help").CombinedOutput()
 	require.NoError(t, err, string(productsHelp))
 	assert.Contains(t, string(productsHelp), "launches")
