@@ -128,12 +128,14 @@ func TestCommandAnnotationsLiteral(t *testing.T) {
 			wantContains: []string{`"mcp:destructive": "true"`, `"mcp:privacy-sensitive": "true"`},
 		},
 		{
-			name: "DELETE method carries destructive annotation",
+			name: "DELETE classified read-only does not carry conflicting destructive annotation",
 			endpoint: spec.Endpoint{
 				Method: "DELETE",
-				Path:   "/messages/{id}",
+				Path:   "/messages/search",
 			},
-			wantContains: []string{`"mcp:destructive": "true"`},
+			isReadOnly:   true,
+			wantContains: []string{`"mcp:read-only": "true"`},
+			wantAbsent:   []string{`"mcp:destructive": "true"`},
 		},
 	}
 
@@ -201,13 +203,13 @@ func TestGeneratedMCPSafetySurfaces(t *testing.T) {
 			},
 		},
 		{
-			name:         "explicit destructive POST emits destructive hint",
+			name:         "explicit destructive POST overrides read-prefix heuristic",
 			resourceName: "Messages",
-			endpointName: "Send",
+			endpointName: "Get",
 			endpoint: spec.Endpoint{
 				Method:      "POST",
 				Path:        "/messages/send",
-				Description: "Send a message",
+				Description: "Get or send a message",
 				Body:        []spec.Param{{Name: "to", Type: "string"}},
 				Meta:        map[string]string{"mcp:destructive": "true"},
 			},

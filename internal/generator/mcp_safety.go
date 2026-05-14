@@ -22,15 +22,16 @@ const unannotatedMutationWarning = "warning: command %s is an unannotated mutati
 
 func commandAnnotationsLiteral(resourceName, endpointName, path string, ep spec.Endpoint, isReadOnly bool) string {
 	method := strings.ToUpper(strings.TrimSpace(ep.Method))
+	destructiveMeta := spec.EndpointMetaTrue(ep, mcpDestructiveAnnotation)
 	parts := []string{
 		fmt.Sprintf("%q: %q", ppEndpointAnnotation, resourceName+"."+endpointName),
 		fmt.Sprintf("%q: %q", ppMethodAnnotation, method),
 		fmt.Sprintf("%q: %q", ppPathAnnotation, path),
 	}
-	if isReadOnly {
+	if isReadOnly && !destructiveMeta {
 		parts = append(parts, fmt.Sprintf("%q: %q", mcpReadOnlyAnnotation, "true"))
 	}
-	if method == "DELETE" || spec.EndpointMetaTrue(ep, mcpDestructiveAnnotation) {
+	if destructiveMeta || (!isReadOnly && method == "DELETE") {
 		parts = append(parts, fmt.Sprintf("%q: %q", mcpDestructiveAnnotation, "true"))
 	}
 	if spec.EndpointMetaTrue(ep, mcpPrivacySensitiveAnnotation) {
