@@ -26,6 +26,7 @@ import (
 func RegisterTools(s *server.MCPServer) {
 	s.AddTool(
 		mcplib.NewTool("items_list",
+			mcplib.WithToolAnnotation(mcplib.ToolAnnotation{}),
 			mcplib.WithDescription("List items. Returns array of Item."),
 			mcplib.WithReadOnlyHintAnnotation(true),
 			mcplib.WithDestructiveHintAnnotation(false),

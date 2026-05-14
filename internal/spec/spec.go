@@ -33,6 +33,16 @@ const (
 	ResponseFormatHTML = "html"
 )
 
+// EndpointMetaTrue is the shared truth parser for endpoint metadata booleans.
+// Keep generator, MCP description, and template helper behavior in sync by
+// routing all mcp:* boolean metadata checks through this function.
+func EndpointMetaTrue(ep Endpoint, key string) bool {
+	if ep.Meta == nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(ep.Meta[key]), "true")
+}
+
 const (
 	TierAuthTypeNone        = "none"
 	TierAuthTypeAPIKey      = "api_key"

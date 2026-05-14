@@ -94,7 +94,7 @@ func Compose(in Input) string {
 	}
 
 	composed = appendMethodMarker(composed, in.Endpoint.Method)
-	composed = prependPrivacyMarker(composed, endpointMetaTrue(in.Endpoint, privacySensitiveMetaKey))
+	composed = prependPrivacyMarker(composed, spec.EndpointMetaTrue(in.Endpoint, privacySensitiveMetaKey))
 	return naming.MCPDescription(composed, in.NoAuth, in.AuthType, in.PublicCount, in.TotalCount)
 }
 
@@ -255,13 +255,6 @@ func prependPrivacyMarker(desc string, privacySensitive bool) string {
 		return desc
 	}
 	return "Privacy-sensitive: may expose personal, financial, or message content. " + desc
-}
-
-func endpointMetaTrue(ep spec.Endpoint, key string) bool {
-	if ep.Meta == nil {
-		return false
-	}
-	return strings.EqualFold(strings.TrimSpace(ep.Meta[key]), "true")
 }
 
 func formatParam(p spec.Param) string {

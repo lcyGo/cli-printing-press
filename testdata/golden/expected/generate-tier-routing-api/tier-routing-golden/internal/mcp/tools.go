@@ -26,6 +26,7 @@ import (
 func RegisterTools(s *server.MCPServer) {
 	s.AddTool(
 		mcplib.NewTool("items_enterprise",
+			mcplib.WithToolAnnotation(mcplib.ToolAnnotation{}),
 			mcplib.WithDescription("List enterprise items."),
 			mcplib.WithReadOnlyHintAnnotation(true),
 			mcplib.WithDestructiveHintAnnotation(false),
@@ -35,6 +36,7 @@ func RegisterTools(s *server.MCPServer) {
 	)
 	s.AddTool(
 		mcplib.NewTool("items_list",
+			mcplib.WithToolAnnotation(mcplib.ToolAnnotation{}),
 			mcplib.WithDescription("List free items. (public)"),
 			mcplib.WithReadOnlyHintAnnotation(true),
 			mcplib.WithDestructiveHintAnnotation(false),
@@ -44,6 +46,7 @@ func RegisterTools(s *server.MCPServer) {
 	)
 	s.AddTool(
 		mcplib.NewTool("items_premium",
+			mcplib.WithToolAnnotation(mcplib.ToolAnnotation{}),
 			mcplib.WithDescription("List paid items."),
 			mcplib.WithReadOnlyHintAnnotation(true),
 			mcplib.WithDestructiveHintAnnotation(false),

@@ -4,6 +4,8 @@
 package cobratree
 
 import (
+	"strings"
+
 	mcplib "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/spf13/cobra"
@@ -30,15 +32,7 @@ func RegisterAll(s *server.MCPServer, root *cobra.Command, cliPath func() (strin
 		if toolName == "" {
 			return
 		}
-		options := []mcplib.ToolOption{mcplib.WithDescription(descriptionFor(cmd))}
-		options = append(options, toolOptionsForFlags(cmd)...)
-		if commandTakesArgs(cmd) {
-			options = append(options, mcplib.WithString("args", mcplib.Description("Additional positional arguments or raw CLI flags to append to the command.")))
-		}
-		if isMCPReadOnly(cmd) {
-			options = append(options, mcplib.WithReadOnlyHintAnnotation(true), mcplib.WithDestructiveHintAnnotation(false))
-		}
-		s.AddTool(mcplib.NewTool(toolName, options...), shellOutToCLI(cliPath, path))
+		s.AddTool(mcplib.NewTool(toolName, toolOptionsForCommand(cmd)...), shellOutToCLI(cliPath, path))
 	})
 }
 
@@ -57,10 +51,68 @@ func walk(cmd *cobra.Command, path []string, visit func(*cobra.Command, []string
 
 func descriptionFor(cmd *cobra.Command) string {
 	if cmd.Long != "" {
-		return cmd.Long
+		return maybePrivacySensitiveDescription(cmd, cmd.Long)
 	}
 	if cmd.Short != "" {
-		return cmd.Short
+		return maybePrivacySensitiveDescription(cmd, cmd.Short)
 	}
-	return "Run `" + cmd.CommandPath() + "` through the companion CLI binary."
+	return maybePrivacySensitiveDescription(cmd, "Run `"+cmd.CommandPath()+"` through the companion CLI binary.")
+}
+
+func toolOptionsForCommand(cmd *cobra.Command) []mcplib.ToolOption {
+	options := []mcplib.ToolOption{
+		mcplib.WithToolAnnotation(mcplib.ToolAnnotation{}),
+		mcplib.WithDescription(descriptionFor(cmd)),
+	}
+	if isMCPPrivacySensitive(cmd) {
+		options = append(options, mcplib.WithTitleAnnotation("Privacy-sensitive"))
+	}
+	options = append(options, toolOptionsForFlags(cmd)...)
+	if commandTakesArgs(cmd) {
+		options = append(options, mcplib.WithString("args", mcplib.Description("Additional positional arguments or raw CLI flags to append to the command.")))
+	}
+	options = append(options, safetyHintOptionsForCommand(cmd)...)
+	return options
+}
+
+func safetyHintOptionsForCommand(cmd *cobra.Command) []mcplib.ToolOption {
+	if isMCPReadOnly(cmd) {
+		return []mcplib.ToolOption{
+			mcplib.WithReadOnlyHintAnnotation(true),
+			mcplib.WithDestructiveHintAnnotation(false),
+			mcplib.WithOpenWorldHintAnnotation(true),
+		}
+	}
+	if isMCPDestructive(cmd) {
+		return []mcplib.ToolOption{
+			mcplib.WithDestructiveHintAnnotation(true),
+			mcplib.WithOpenWorldHintAnnotation(true),
+		}
+	}
+	switch commandMethod(cmd) {
+	case "GET":
+		return []mcplib.ToolOption{
+			mcplib.WithReadOnlyHintAnnotation(true),
+			mcplib.WithDestructiveHintAnnotation(false),
+			mcplib.WithOpenWorldHintAnnotation(true),
+		}
+	case "DELETE":
+		return []mcplib.ToolOption{
+			mcplib.WithDestructiveHintAnnotation(true),
+			mcplib.WithOpenWorldHintAnnotation(true),
+		}
+	default:
+		return nil
+	}
+}
+
+func maybePrivacySensitiveDescription(cmd *cobra.Command, desc string) string {
+	if !isMCPPrivacySensitive(cmd) {
+		return desc
+	}
+	lower := strings.ToLower(desc)
+	if strings.Contains(lower, "privacy-sensitive") || strings.Contains(lower, "privacy sensitive") {
+		return desc
+	}
+	return "Privacy-sensitive: may expose personal, financial, or message content. " + desc
 }

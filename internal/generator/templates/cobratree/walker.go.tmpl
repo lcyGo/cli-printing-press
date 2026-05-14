@@ -4,6 +4,8 @@
 package cobratree
 
 import (
+	"strings"
+
 	mcplib "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/spf13/cobra"
@@ -78,19 +80,27 @@ func safetyHintOptionsForCommand(cmd *cobra.Command) []mcplib.ToolOption {
 		return []mcplib.ToolOption{
 			mcplib.WithReadOnlyHintAnnotation(true),
 			mcplib.WithDestructiveHintAnnotation(false),
+			mcplib.WithOpenWorldHintAnnotation(true),
 		}
 	}
 	if isMCPDestructive(cmd) {
-		return []mcplib.ToolOption{mcplib.WithDestructiveHintAnnotation(true)}
+		return []mcplib.ToolOption{
+			mcplib.WithDestructiveHintAnnotation(true),
+			mcplib.WithOpenWorldHintAnnotation(true),
+		}
 	}
 	switch commandMethod(cmd) {
 	case "GET":
 		return []mcplib.ToolOption{
 			mcplib.WithReadOnlyHintAnnotation(true),
 			mcplib.WithDestructiveHintAnnotation(false),
+			mcplib.WithOpenWorldHintAnnotation(true),
 		}
 	case "DELETE":
-		return []mcplib.ToolOption{mcplib.WithDestructiveHintAnnotation(true)}
+		return []mcplib.ToolOption{
+			mcplib.WithDestructiveHintAnnotation(true),
+			mcplib.WithOpenWorldHintAnnotation(true),
+		}
 	default:
 		return nil
 	}
@@ -98,6 +108,10 @@ func safetyHintOptionsForCommand(cmd *cobra.Command) []mcplib.ToolOption {
 
 func maybePrivacySensitiveDescription(cmd *cobra.Command, desc string) string {
 	if !isMCPPrivacySensitive(cmd) {
+		return desc
+	}
+	lower := strings.ToLower(desc)
+	if strings.Contains(lower, "privacy-sensitive") || strings.Contains(lower, "privacy sensitive") {
 		return desc
 	}
 	return "Privacy-sensitive: may expose personal, financial, or message content. " + desc

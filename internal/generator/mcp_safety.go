@@ -20,26 +20,20 @@ const (
 
 const unannotatedMutationWarning = "warning: command %s is an unannotated mutation; agents will not see destructive signal; annotate explicitly with mcp:destructive=true when the action is destructive.\n"
 
-func endpointMetaTrue(ep spec.Endpoint, key string) bool {
-	if ep.Meta == nil {
-		return false
-	}
-	return strings.EqualFold(strings.TrimSpace(ep.Meta[key]), "true")
-}
-
 func commandAnnotationsLiteral(resourceName, endpointName, path string, ep spec.Endpoint, isReadOnly bool) string {
+	method := strings.ToUpper(strings.TrimSpace(ep.Method))
 	parts := []string{
 		fmt.Sprintf("%q: %q", ppEndpointAnnotation, resourceName+"."+endpointName),
-		fmt.Sprintf("%q: %q", ppMethodAnnotation, strings.ToUpper(strings.TrimSpace(ep.Method))),
+		fmt.Sprintf("%q: %q", ppMethodAnnotation, method),
 		fmt.Sprintf("%q: %q", ppPathAnnotation, path),
 	}
 	if isReadOnly {
 		parts = append(parts, fmt.Sprintf("%q: %q", mcpReadOnlyAnnotation, "true"))
 	}
-	if endpointMetaTrue(ep, mcpDestructiveAnnotation) {
+	if method == "DELETE" || spec.EndpointMetaTrue(ep, mcpDestructiveAnnotation) {
 		parts = append(parts, fmt.Sprintf("%q: %q", mcpDestructiveAnnotation, "true"))
 	}
-	if endpointMetaTrue(ep, mcpPrivacySensitiveAnnotation) {
+	if spec.EndpointMetaTrue(ep, mcpPrivacySensitiveAnnotation) {
 		parts = append(parts, fmt.Sprintf("%q: %q", mcpPrivacySensitiveAnnotation, "true"))
 	}
 	return "map[string]string{" + strings.Join(parts, ", ") + "}"
@@ -81,7 +75,7 @@ func endpointNeedsMutationWarning(endpoint spec.Endpoint, opName string) bool {
 	if !isNeutralMutationMethod(endpoint.Method) {
 		return false
 	}
-	if endpointMetaTrue(endpoint, mcpDestructiveAnnotation) {
+	if spec.EndpointMetaTrue(endpoint, mcpDestructiveAnnotation) {
 		return false
 	}
 	return endpointIsWriteCommand(endpoint, opName)

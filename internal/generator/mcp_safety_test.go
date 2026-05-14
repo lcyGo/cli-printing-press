@@ -127,6 +127,14 @@ func TestCommandAnnotationsLiteral(t *testing.T) {
 			},
 			wantContains: []string{`"mcp:destructive": "true"`, `"mcp:privacy-sensitive": "true"`},
 		},
+		{
+			name: "DELETE method carries destructive annotation",
+			endpoint: spec.Endpoint{
+				Method: "DELETE",
+				Path:   "/messages/{id}",
+			},
+			wantContains: []string{`"mcp:destructive": "true"`},
+		},
 	}
 
 	for _, tt := range tests {
@@ -284,6 +292,7 @@ func TestToolOptionsForCommandSafetyHints(t *testing.T) {
 		cmd                  *cobra.Command
 		wantReadOnly         *bool
 		wantDestructive      *bool
+		wantOpenWorld        *bool
 		wantTitle            string
 		wantDescriptionStart string
 	}{
@@ -298,6 +307,7 @@ func TestToolOptionsForCommandSafetyHints(t *testing.T) {
 			},
 			wantReadOnly: boolPtr(true),
 			wantDestructive: boolPtr(false),
+			wantOpenWorld: boolPtr(true),
 		},
 		{
 			name: "DELETE defaults to destructive",
@@ -309,6 +319,7 @@ func TestToolOptionsForCommandSafetyHints(t *testing.T) {
 				},
 			},
 			wantDestructive: boolPtr(true),
+			wantOpenWorld: boolPtr(true),
 		},
 		{
 			name: "POST stays neutral without annotation",
@@ -331,12 +342,13 @@ func TestToolOptionsForCommandSafetyHints(t *testing.T) {
 				},
 			},
 			wantDestructive: boolPtr(true),
+			wantOpenWorld: boolPtr(true),
 		},
 		{
 			name: "privacy-sensitive GET adds title and warning",
 			cmd: &cobra.Command{
 				Use:   "mail",
-				Short: "Get mail",
+				Short: "Privacy-sensitive: Get mail",
 				Annotations: map[string]string{
 					MethodAnnotation:           "GET",
 					PrivacySensitiveAnnotation: "true",
@@ -344,8 +356,9 @@ func TestToolOptionsForCommandSafetyHints(t *testing.T) {
 			},
 			wantReadOnly: boolPtr(true),
 			wantDestructive: boolPtr(false),
+			wantOpenWorld: boolPtr(true),
 			wantTitle: "Privacy-sensitive",
-			wantDescriptionStart: "Privacy-sensitive: may expose personal, financial, or message content.",
+			wantDescriptionStart: "Privacy-sensitive: Get mail",
 		},
 	}
 
@@ -366,6 +379,13 @@ func TestToolOptionsForCommandSafetyHints(t *testing.T) {
 				}
 			} else if tool.Annotations.DestructiveHint == nil || *tool.Annotations.DestructiveHint != *tc.wantDestructive {
 				t.Fatalf("destructiveHint = %v, want %v", tool.Annotations.DestructiveHint, *tc.wantDestructive)
+			}
+			if tc.wantOpenWorld == nil {
+				if tool.Annotations.OpenWorldHint != nil {
+					t.Fatalf("openWorldHint = %v, want nil", *tool.Annotations.OpenWorldHint)
+				}
+			} else if tool.Annotations.OpenWorldHint == nil || *tool.Annotations.OpenWorldHint != *tc.wantOpenWorld {
+				t.Fatalf("openWorldHint = %v, want %v", tool.Annotations.OpenWorldHint, *tc.wantOpenWorld)
 			}
 			if tc.wantTitle != "" && tool.Annotations.Title != tc.wantTitle {
 				t.Fatalf("title = %q, want %q", tool.Annotations.Title, tc.wantTitle)

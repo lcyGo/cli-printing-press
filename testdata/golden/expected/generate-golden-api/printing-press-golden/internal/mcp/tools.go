@@ -26,6 +26,7 @@ import (
 func RegisterTools(s *server.MCPServer) {
 	s.AddTool(
 		mcplib.NewTool("currencies_list",
+			mcplib.WithToolAnnotation(mcplib.ToolAnnotation{}),
 			mcplib.WithDescription("List supported currencies. Returns array of Currency."),
 			mcplib.WithReadOnlyHintAnnotation(true),
 			mcplib.WithDestructiveHintAnnotation(false),
@@ -35,14 +36,15 @@ func RegisterTools(s *server.MCPServer) {
 	)
 	s.AddTool(
 		mcplib.NewTool("projects_create",
+			mcplib.WithToolAnnotation(mcplib.ToolAnnotation{}),
 			mcplib.WithDescription("Create project. Required: name, visibility. Optional: owner_email. Returns the new Project."),
-			mcplib.WithDestructiveHintAnnotation(false),
 			mcplib.WithOpenWorldHintAnnotation(true),
 		),
 		makeAPIHandler("POST", "/projects", []string{ }),
 	)
 	s.AddTool(
 		mcplib.NewTool("projects_get",
+			mcplib.WithToolAnnotation(mcplib.ToolAnnotation{}),
 			mcplib.WithDescription("Get project. Required: projectId."),
 			mcplib.WithString("projectId", mcplib.Required(), mcplib.Description("Project id")),
 			mcplib.WithReadOnlyHintAnnotation(true),
@@ -53,6 +55,7 @@ func RegisterTools(s *server.MCPServer) {
 	)
 	s.AddTool(
 		mcplib.NewTool("projects_list",
+			mcplib.WithToolAnnotation(mcplib.ToolAnnotation{}),
 			mcplib.WithDescription("List projects. Optional: status, limit (default: 25), cursor. Returns array of Project."),
 			mcplib.WithString("status", mcplib.Description("Status")),
 			mcplib.WithString("limit", mcplib.Description("Limit")),
@@ -65,6 +68,7 @@ func RegisterTools(s *server.MCPServer) {
 	)
 	s.AddTool(
 		mcplib.NewTool("projects_tasks_list-project",
+			mcplib.WithToolAnnotation(mcplib.ToolAnnotation{}),
 			mcplib.WithDescription("List project tasks. Required: projectId. Optional: priority, limit (default: 50), cursor. Returns array of Task."),
 			mcplib.WithString("projectId", mcplib.Required(), mcplib.Description("Project id")),
 			mcplib.WithString("priority", mcplib.Description("Priority")),
@@ -78,6 +82,7 @@ func RegisterTools(s *server.MCPServer) {
 	)
 	s.AddTool(
 		mcplib.NewTool("projects_tasks_update-project",
+			mcplib.WithToolAnnotation(mcplib.ToolAnnotation{}),
 			mcplib.WithDescription("Update project task. Required: projectId, taskId. Optional: completed, priority, title. Partial update."),
 			mcplib.WithString("projectId", mcplib.Required(), mcplib.Description("Project id")),
 			mcplib.WithString("taskId", mcplib.Required(), mcplib.Description("Task id")),
@@ -87,6 +92,7 @@ func RegisterTools(s *server.MCPServer) {
 	)
 	s.AddTool(
 		mcplib.NewTool("public_get-status",
+			mcplib.WithToolAnnotation(mcplib.ToolAnnotation{}),
 			mcplib.WithDescription("Get public service status. (public)"),
 			mcplib.WithReadOnlyHintAnnotation(true),
 			mcplib.WithDestructiveHintAnnotation(false),
@@ -96,6 +102,7 @@ func RegisterTools(s *server.MCPServer) {
 	)
 	s.AddTool(
 		mcplib.NewTool("reports_summary_get-report-year",
+			mcplib.WithToolAnnotation(mcplib.ToolAnnotation{}),
 			mcplib.WithDescription("Get a report summary for a year. Required: year."),
 			mcplib.WithString("year", mcplib.Required(), mcplib.Description("Year")),
 			mcplib.WithReadOnlyHintAnnotation(true),

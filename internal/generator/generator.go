@@ -223,7 +223,7 @@ func New(s *spec.APISpec, outputDir string) *Generator {
 		"composeMCPDesc":         composeMCPDesc,
 		"composeMCPSubDesc":      composeMCPSubDesc,
 		"mcpParamDesc":           g.mcpParamDescription,
-		"endpointMetaTrue":       endpointMetaTrue,
+		"endpointMetaTrue":       spec.EndpointMetaTrue,
 		"commandAnnotations":     commandAnnotationsLiteral,
 		"flagName":               flagName,
 		"paramIdent":             paramIdent,
