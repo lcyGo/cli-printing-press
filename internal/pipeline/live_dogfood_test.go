@@ -267,6 +267,88 @@ func TestHappyPathFileFixtureSkip(t *testing.T) {
 	}
 }
 
+// TestRunLiveDogfoodFixtureSkipDoesNotPoisonCompanionCache pins the
+// invariant that when happy_path's fixture-skip guard fires, the
+// companion-resolution subprocess is not invoked. resolveCommandPositionals
+// writes a negative-cache sentinel to ctx.cache.results on failure, and
+// sibling commands sharing the same companion key reuse that sentinel —
+// so a spurious call here would silently downgrade unrelated commands to
+// skipped for the rest of the run.
+func TestRunLiveDogfoodFixtureSkipDoesNotPoisonCompanionCache(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses a shell script as the fake binary; skip on Windows")
+	}
+	t.Parallel()
+
+	importHelp := strings.Join([]string{
+		"Import accounts from a CSV file.",
+		"",
+		"Usage:",
+		"  fixture-pp-cli accounts import <account-id> [flags]",
+		"",
+		"Examples:",
+		"  fixture-pp-cli accounts import --file accounts.csv",
+		"",
+		"Flags:",
+		"      --file string   Path to the CSV file",
+	}, "\n")
+	listHelp := strings.Join([]string{
+		"List accounts.",
+		"",
+		"Usage:",
+		"  fixture-pp-cli accounts list [flags]",
+		"",
+		"Examples:",
+		"  fixture-pp-cli accounts list",
+	}, "\n")
+
+	dir := t.TempDir()
+	binPath := filepath.Join(dir, "fixture-pp-cli")
+	// The accounts list companion exits non-zero. Before the fix,
+	// resolveCommandPositionals is invoked unconditionally and writes the
+	// negative-cache sentinel here. After the fix it is short-circuited by
+	// the fixture-skip check and the cache stays empty.
+	script := "#!/bin/sh\nif [ \"$1\" = \"accounts\" ] && [ \"$2\" = \"list\" ] && [ \"$3\" = \"--help\" ]; then\n" +
+		"cat <<'HELP'\n" + listHelp + "\nHELP\nexit 0; fi\n" +
+		"if [ \"$1\" = \"accounts\" ] && [ \"$2\" = \"list\" ]; then exit 1; fi\n" +
+		"cat <<'HELP'\n" + importHelp + "\nHELP\n"
+	require.NoError(t, os.WriteFile(binPath, []byte(script), 0o755))
+
+	listCmd := liveDogfoodCommand{Path: []string{"accounts", "list"}, Help: listHelp}
+	importCmd := liveDogfoodCommand{Path: []string{"accounts", "import"}, Help: importHelp}
+
+	cache := newCompanionCache()
+	ctx := resolveCtx{
+		binaryPath: binPath,
+		cliDir:     dir,
+		siblings:   buildSiblingMap([]liveDogfoodCommand{listCmd, importCmd}),
+		cache:      cache,
+		timeout:    2 * time.Second,
+	}
+
+	results := runLiveDogfoodCommand(importCmd, ctx)
+	require.NotEmpty(t, results)
+
+	var happy *LiveDogfoodTestResult
+	for i := range results {
+		if results[i].Kind == LiveDogfoodTestHappy {
+			happy = &results[i]
+			break
+		}
+	}
+	require.NotNil(t, happy, "expected happy_path result")
+	assert.Equal(t, LiveDogfoodStatusSkip, happy.Status)
+	assert.Contains(t, happy.Reason, reasonFileFixtureRequired)
+
+	// Cache must be untouched — resolveCommandPositionals must NOT have run.
+	// A non-empty cache here means the fixture-skip short-circuit regressed
+	// and the companion subprocess was invoked, leaving a negative-cache
+	// sentinel that sibling commands sharing the same companion would reuse.
+	assert.Empty(t, cache.results,
+		"fixture-skip path must not invoke resolveCommandPositionals; "+
+			"writing to the companion cache poisons sibling commands")
+}
+
 func TestRunLiveDogfoodHappyPathHandlesShellCommentInExample(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test uses a shell script as the fake binary; skip on Windows")

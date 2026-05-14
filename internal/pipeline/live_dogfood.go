@@ -676,7 +676,17 @@ func runLiveDogfoodCommand(command liveDogfoodCommand, ctx resolveCtx) []LiveDog
 	useDryRun := mutating && commandSupportsDryRun(command.Help)
 
 	fixtureSkip := happyPathFileFixtureSkip(happyArgs, ctx.cliDir)
-	resolvedArgs, resolveSkipped, resolveReason := resolveCommandPositionals(command, happyArgs, ctx)
+	// resolveCommandPositionals runs a list-companion subprocess and writes
+	// a negative-cache sentinel on failure that other sibling commands
+	// sharing the same companion key reuse. Don't invoke it when we already
+	// know the happy_path will skip — the cache write would poison those
+	// siblings.
+	var resolvedArgs []string
+	var resolveSkipped bool
+	var resolveReason string
+	if fixtureSkip == "" {
+		resolvedArgs, resolveSkipped, resolveReason = resolveCommandPositionals(command, happyArgs, ctx)
+	}
 	switch {
 	case fixtureSkip != "":
 		results = append(results,
