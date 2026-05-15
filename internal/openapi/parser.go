@@ -3320,7 +3320,8 @@ func readWalkerExtension(extensions map[string]any, context string) *spec.Walker
 
 // resolveIDFieldFromResponseSchema implements tiers 2-5 of the IDField fallback
 // chain: prefer "id", then a resource-prefixed key (`<singular>_id` /
-// `_uuid` / `_guid`), then "name", then the first scalar field listed in the
+// `_uuid` / `_guid`), then a vendor identifier (`gid` / `sid` / `uid` /
+// `uuid` / `guid`), then "name", then the first scalar field listed in the
 // response schema's `required:` array (walking properties in their schema order).
 // Returns "" when no field qualifies; templates fall through to runtime list
 // scanning. Tier 1 (`x-resource-id` extension) is handled separately by the
@@ -3360,6 +3361,18 @@ func resolveIDFieldFromResponseSchema(op *openapi3.Operation, resourceName strin
 	// `auth-tokens`/`auth_token_id` match through the same comparison.
 	if id := resourcePrefixedIDField(itemSchema, resourceName); id != "" {
 		return id
+	}
+
+	// Tier 3.5: vendor-specific identifier names. Asana keys every resource
+	// on `gid`, Twilio on `sid`, others on `uid`/`uuid`/`guid`. These are
+	// scalar primary keys by convention; without this tier the heuristic
+	// falls through to Tier 4 and picks `name` (a display field), so the
+	// generated CLI upserts on names and sync paths like
+	// `/workspaces/<workspace>/users` get a name where the API expects a gid.
+	for _, key := range []string{"gid", "sid", "uid", "uuid", "guid"} {
+		if _, ok := itemSchema.Properties[key]; ok {
+			return key
+		}
 	}
 
 	// Tier 4: explicit `name`
