@@ -2832,6 +2832,89 @@ func TestExtractPageItemsNoCursor(t *testing.T) {
 	runGoCommandRequired(t, outputDir, "test", "-run", "TestExtractPageItems", "./internal/cli")
 }
 
+// TestGeneratedSyncSerializesUnderVerifyEnv pins that the emitted sync
+// command clamps its worker pool to one goroutine when running under
+// PRINTING_PRESS_VERIFY=1. Without this clamp, the dry-run mock races
+// instantly against SQLite and trips SQLITE_BUSY before _busy_timeout
+// fires, breaking shipcheck legs that exercise `sync` examples.
+func TestGeneratedSyncSerializesUnderVerifyEnv(t *testing.T) {
+	t.Parallel()
+
+	apiSpec := &spec.APISpec{
+		Name:    "verify-sync",
+		Version: "0.1.0",
+		BaseURL: "https://verify-sync.example.com",
+		Auth:    spec.AuthConfig{Type: "none"},
+		Config: spec.ConfigSpec{
+			Format: "toml",
+			Path:   "~/.config/verify-sync-pp-cli/config.toml",
+		},
+		Resources: map[string]spec.Resource{
+			"things": {
+				Description: "Things",
+				Endpoints: map[string]spec.Endpoint{
+					"list": {
+						Method:      "GET",
+						Path:        "/things",
+						Description: "List things",
+						Response:    spec.ResponseDef{Type: "array"},
+						Params: []spec.Param{
+							{Name: "id", Type: "string"},
+							{Name: "name", Type: "string"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	outputDir := filepath.Join(t.TempDir(), naming.CLI(apiSpec.Name))
+	gen := New(apiSpec, outputDir)
+	gen.VisionSet = VisionTemplateSet{Store: true, Sync: true}
+	require.NoError(t, gen.Generate())
+
+	syncSrc, err := os.ReadFile(filepath.Join(outputDir, "internal", "cli", "sync.go"))
+	require.NoError(t, err)
+	src := string(syncSrc)
+
+	// Stripping comments first prevents false negatives from a refactor
+	// that removes the call sites but leaves the explanatory prose
+	// behind. The check would otherwise pass on comments alone.
+	codeOnly := stripGoComments(src)
+
+	assert.Contains(t, codeOnly, "cliutil.IsVerifyEnv()",
+		"sync.go must consult cliutil.IsVerifyEnv() so verify-mode runs short-circuit the worker pool")
+	// `\b` after the `1` rejects `concurrency = 10`/`= 100` survivals if a
+	// future refactor widens the literal while keeping the call-site shape.
+	assert.Regexp(t, `(?s)cliutil\.IsVerifyEnv\(\)\s*\{[^}]*concurrency\s*=\s*1\b`, codeOnly,
+		"sync.go must clamp concurrency to 1 when IsVerifyEnv() is true so dry-run sync serializes SQLite writes")
+}
+
+// TestGeneratedGraphQLSyncSerializesUnderVerifyEnv is the GraphQL-spec
+// counterpart to TestGeneratedSyncSerializesUnderVerifyEnv. The generator
+// swaps sync.go.tmpl for graphql_sync.go.tmpl when isGraphQLSpec() is true,
+// so the verify-mode clamp must ship from both templates or GraphQL-backed
+// CLIs still race on SQLite under PRINTING_PRESS_VERIFY=1.
+func TestGeneratedGraphQLSyncSerializesUnderVerifyEnv(t *testing.T) {
+	t.Parallel()
+
+	gqlSpec, err := graphql.ParseSDL(filepath.Join("..", "..", "testdata", "graphql", "test.graphql"))
+	require.NoError(t, err)
+
+	outputDir := filepath.Join(t.TempDir(), naming.CLI(gqlSpec.Name))
+	gen := New(gqlSpec, outputDir)
+	require.NoError(t, gen.Generate())
+
+	syncSrc, err := os.ReadFile(filepath.Join(outputDir, "internal", "cli", "sync.go"))
+	require.NoError(t, err)
+	codeOnly := stripGoComments(string(syncSrc))
+
+	assert.Contains(t, codeOnly, "cliutil.IsVerifyEnv()",
+		"graphql_sync.go must consult cliutil.IsVerifyEnv() so verify-mode runs short-circuit the worker pool")
+	assert.Regexp(t, `(?s)cliutil\.IsVerifyEnv\(\)\s*\{[^}]*concurrency\s*=\s*1\b`, codeOnly,
+		"graphql_sync.go must clamp concurrency to 1 when IsVerifyEnv() is true")
+}
+
 // TestGeneratedSyncHandlesPascalCaseDotNetShape verifies the generated sync +
 // store paths recognize .NET-shape PascalCase envelopes ("Items"), PKs ("Id"),
 // and field keys (LookupFieldValue PascalCase pass). Parser-side tier-5 PK

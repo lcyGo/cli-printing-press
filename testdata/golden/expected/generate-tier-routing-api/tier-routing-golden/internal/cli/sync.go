@@ -15,6 +15,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"tier-routing-golden-pp-cli/internal/client"
+	"tier-routing-golden-pp-cli/internal/cliutil"
 	"tier-routing-golden-pp-cli/internal/store"
 	"time"
 )
@@ -182,6 +183,12 @@ Resource scoping:
 			// Worker pool: produce resources, N workers consume
 			if concurrency < 1 {
 				concurrency = 4
+			}
+			// Under PRINTING_PRESS_VERIFY=1, mock responses return instantly
+			// and the worker pool races on SQLite faster than _busy_timeout
+			// can absorb. Serialize writes to avoid SQLITE_BUSY in dry-run.
+			if cliutil.IsVerifyEnv() {
+				concurrency = 1
 			}
 
 			started := time.Now()
