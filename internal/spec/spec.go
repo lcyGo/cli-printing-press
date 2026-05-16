@@ -773,7 +773,15 @@ func (c *AuthConfig) OverrideEnvVars(envVars []string) {
 }
 
 func remapAuthFormatForEnvOverride(auth *AuthConfig, oldEnvVars, newEnvVars []string) {
-	if auth.Format == "" || len(oldEnvVars) != 1 || len(newEnvVars) != 1 {
+	// Format strings interpolate exactly one env var by placeholder. The remap
+	// only makes sense when the old list named one placeholder; the new list
+	// may carry several priority-ordered names, in which case the first entry
+	// is the canonical placeholder for the format string. Without this, a
+	// 1->N override (catalog-mode shape: canonical + aliases) would leave
+	// auth.Format referencing a placeholder absent from the new env-var map,
+	// and applyAuthFormat would emit the literal {placeholder} into the
+	// Authorization header.
+	if auth.Format == "" || len(oldEnvVars) != 1 || len(newEnvVars) == 0 {
 		return
 	}
 	oldPlaceholder := naming.EnvVarPlaceholder(oldEnvVars[0])

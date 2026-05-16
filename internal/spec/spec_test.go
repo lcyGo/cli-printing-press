@@ -4358,13 +4358,27 @@ func TestAuthConfigOverrideEnvVars(t *testing.T) {
 		assert.Equal(t, "Token {secret_key}", auth.Format)
 	})
 
-	t.Run("remap is no-op for multi-element overrides", func(t *testing.T) {
+	t.Run("1->N override remaps placeholder to the new canonical (first) entry", func(t *testing.T) {
+		// Catalog-mode shape: catalog declares a priority-ordered list of
+		// canonical + alias env vars. The format string can only reference
+		// one placeholder; the first new entry wins.
 		auth := &AuthConfig{
 			Format:  "Token {bearer_auth}",
 			EnvVars: []string{"FOO_BEARER_AUTH"},
 		}
 
 		auth.OverrideEnvVars([]string{"FOO_SECRET_KEY", "FOO_API_KEY"})
+
+		assert.Equal(t, "Token {secret_key}", auth.Format)
+	})
+
+	t.Run("N->1 override leaves Format untouched (no unambiguous source placeholder)", func(t *testing.T) {
+		auth := &AuthConfig{
+			Format:  "Token {bearer_auth}",
+			EnvVars: []string{"FOO_BEARER_AUTH", "FOO_API_KEY"},
+		}
+
+		auth.OverrideEnvVars([]string{"FOO_SECRET_KEY"})
 
 		assert.Equal(t, "Token {bearer_auth}", auth.Format)
 	})

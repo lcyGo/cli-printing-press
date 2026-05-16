@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mvanhorn/cli-printing-press/v4/internal/catalog"
+	"github.com/mvanhorn/cli-printing-press/v4/internal/catalogmeta"
 	"github.com/mvanhorn/cli-printing-press/v4/internal/spec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -400,6 +402,59 @@ func TestTierRouting_BearerPrefix(t *testing.T) {
 		"per-tier bearer auth must honor configured prefix")
 	assert.NotContains(t, content, `value := "Bearer " + tierValue0`,
 		"default Bearer literal must not leak when tier prefix is overridden")
+}
+
+// TestAuthHeader_CatalogAuthEnvVarsReachConfig pins the end-to-end contract
+// for the catalog auth_env_vars field: ApplyRuntimeMetadata sets EnvVars on
+// the spec, the generator emits config.go with the catalog-supplied names in
+// priority order, and the slug-derived <API>_BEARER_AUTH default never lands
+// in the generated config. Without this, the unit tests for ApplyRuntimeMetadata
+// and OverrideEnvVars could pass while the generator quietly read the wrong
+// EnvVarSpecs source and the printed CLI still asked for the mechanical
+// default.
+func TestAuthHeader_CatalogAuthEnvVarsReachConfig(t *testing.T) {
+	t.Parallel()
+
+	apiSpec := minimalSpec("catalog-auth")
+	apiSpec.Auth = spec.AuthConfig{
+		Type:    "bearer_token",
+		Header:  "Authorization",
+		EnvVars: []string{"CATALOG_AUTH_BEARER_AUTH"},
+		EnvVarSpecs: []spec.AuthEnvVar{
+			{Name: "CATALOG_AUTH_BEARER_AUTH", Kind: spec.AuthEnvVarKindPerCall, Required: true, Sensitive: true, Inferred: true},
+		},
+	}
+	entry := &catalog.Entry{
+		Name:        "catalog-auth",
+		AuthEnvVars: []string{"CATALOG_AUTH_SECRET_KEY", "CATALOG_AUTH_API_KEY"},
+	}
+
+	catalogmeta.ApplyRuntimeMetadata(apiSpec, entry)
+
+	outputDir := filepath.Join(t.TempDir(), "catalog-auth-pp-cli")
+	require.NoError(t, New(apiSpec, outputDir).Generate())
+
+	cfgSrc, err := os.ReadFile(filepath.Join(outputDir, "internal", "config", "config.go"))
+	require.NoError(t, err)
+	content := string(cfgSrc)
+
+	canonicalField := resolveEnvVarField("CATALOG_AUTH_SECRET_KEY")
+	aliasField := resolveEnvVarField("CATALOG_AUTH_API_KEY")
+	defaultField := resolveEnvVarField("CATALOG_AUTH_BEARER_AUTH")
+
+	canonicalIdx := strings.Index(content, `os.Getenv("CATALOG_AUTH_SECRET_KEY")`)
+	aliasIdx := strings.Index(content, `os.Getenv("CATALOG_AUTH_API_KEY")`)
+	require.NotEqual(t, -1, canonicalIdx, "config.go must read the canonical catalog env var")
+	require.NotEqual(t, -1, aliasIdx, "config.go must also read the alias catalog env var")
+	assert.Less(t, canonicalIdx, aliasIdx, "canonical env var must be read before the alias")
+
+	assert.NotContains(t, content, `os.Getenv("CATALOG_AUTH_BEARER_AUTH")`,
+		"slug-derived default must not survive the catalog override")
+	assert.NotContains(t, content, "c."+defaultField,
+		"Config struct field for the slug-derived default must not be emitted")
+
+	assert.Contains(t, content, "c."+canonicalField)
+	assert.Contains(t, content, "c."+aliasField)
 }
 
 // authHeaderBody slices out just the AuthHeader function body so precedence
