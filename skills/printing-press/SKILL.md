@@ -1712,6 +1712,14 @@ Skipping this step pushes the agent into hand-patching
 checks after a `doctor` FAIL against the operator's real environment.
 Enriching the spec avoids that round-trip.
 
+**Catalog-mode shortcut:** When the run is `printing-press generate <catalog-name>`
+and the catalog entry declares `auth_env_vars: [...]`, the catalog field
+takes precedence over both parser inference and spec extensions. No spec
+edit is needed -- catalog metadata is the right place to record the
+canonical env var per API once, and printers reuse it on every regen.
+Spec-level `x-auth-env-vars` enrichment is still the path for ad-hoc
+specs and for entries the catalog doesn't yet cover.
+
 For OpenAPI specs that need richer env-var metadata (kind classification,
 optional credentials, OR-group relationships), use `x-auth-vars` on the
 security scheme. See `docs/SPEC-EXTENSIONS.md` for the canonical schema.
