@@ -495,8 +495,17 @@ func runGenerateProject(apiSpec *spec.APISpec, absOut string, opts generateProje
 	if opts.rejectUnshippablePageContextTraffic && trafficAnalysisRequiresUnshippablePageContext(trafficAnalysis) {
 		return nil, false, &ExitError{Code: ExitInputError, Err: fmt.Errorf("traffic analysis says this target requires live browser page-context execution; persistent browser transport is not a shippable printed CLI runtime. Re-run discovery for a Surf/direct/browser-clearance replayable surface instead")}
 	}
-	applyHTTPTransportDefault(apiSpec, trafficAnalysis)
+	// ApplyReachabilityDefaults runs first so its HAR-driven HTTP-version
+	// mapping wins for browser_http / browser_clearance_http modes.
+	// applyHTTPTransportDefault then fills the cases reachability does
+	// not cover (no reachability section, hint-only signals, browser_required)
+	// because its own no-op-when-set guard short-circuits in the populated
+	// case. The two functions cover disjoint reachability modes, so the
+	// short-circuit is the only thing keeping a write-write conflict
+	// impossible today; preserve that invariant if either function's
+	// mode coverage widens.
 	browsersniff.ApplyReachabilityDefaults(apiSpec, trafficAnalysis)
+	applyHTTPTransportDefault(apiSpec, trafficAnalysis)
 	gen.TrafficAnalysis = trafficAnalysis
 	if err := gen.Generate(); err != nil {
 		return nil, false, &ExitError{Code: ExitGenerationError, Err: fmt.Errorf("generating project: %w", err)}
@@ -561,10 +570,10 @@ func normalizeClientPattern(value string) (string, error) {
 
 func normalizeHTTPTransport(value string) (string, error) {
 	switch value {
-	case "", spec.HTTPTransportStandard, spec.HTTPTransportBrowserHTTP, spec.HTTPTransportBrowserChrome, spec.HTTPTransportBrowserChromeH3:
+	case "", spec.HTTPTransportStandard, spec.HTTPTransportBrowserHTTP, spec.HTTPTransportBrowserChrome, spec.HTTPTransportBrowserChromeH2, spec.HTTPTransportBrowserChromeH3:
 		return value, nil
 	default:
-		return "", fmt.Errorf("--transport must be one of: standard, browser-http, browser-chrome, browser-chrome-h3 (got %q)", value)
+		return "", fmt.Errorf("--transport must be one of: standard, browser-http, browser-chrome, browser-chrome-h2, browser-chrome-h3 (got %q)", value)
 	}
 }
 
@@ -596,7 +605,14 @@ func applyHTTPTransportDefault(apiSpec *spec.APISpec, analysis *browsersniff.Tra
 		return
 	}
 	if trafficAnalysisRecommendsBrowserTransport(analysis) {
-		apiSpec.HTTPTransport = spec.HTTPTransportBrowserChrome
+		// Surface the implicit H/2 force the pre-template-change else-branch
+		// provided. ApplyReachabilityDefaults handles the browser_http /
+		// browser_clearance_http modes with HAR-driven precision; everything
+		// this branch covers (Cloudflare/DataDome/Akamai protections, html_scrape
+		// protocol, generic browser/scrape hints) lacks HAR HTTP-version data,
+		// so default to -h2 instead of bare browser-chrome (no force) to keep
+		// shipped CLIs on origins these heuristics flag behaving identically.
+		apiSpec.HTTPTransport = spec.HTTPTransportBrowserChromeH2
 	}
 }
 
