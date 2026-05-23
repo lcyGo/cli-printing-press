@@ -203,66 +203,62 @@ func New(s *spec.APISpec, outputDir string) *Generator {
 		templates: make(map[string]*template.Template),
 	}
 	g.funcs = template.FuncMap{
-		"title":                 cases.Title(language.English).String,
-		"lower":                 strings.ToLower,
-		"upper":                 strings.ToUpper,
-		"join":                  strings.Join,
-		"camel":                 toCamel,
-		"snake":                 naming.Snake,
-		"pascal":                toPascal,
-		"goType":                goType,
-		"goStructType":          goStructType,
-		"goTypeForParam":        goTypeForParam,
-		"goStoreType":           goStoreType,
-		"cobraFlagFunc":         cobraFlagFunc,
-		"cobraFlagFuncForParam": cobraFlagFuncForParam,
-		"mcpBindingFunc":        mcpBindingFunc,
-		"recipeParamTypeString": func(t RecipeIntentParamType) string { return string(t) },
-		"defaultVal":            defaultVal,
-		"defaultValForParam":    defaultValForParam,
-		"isConstDefault":        paramIsConstDefault,
-		"zeroVal":               zeroVal,
-		"zeroValForParam": func(name, t string) string {
-			kind := primitiveKind(t)
-			if isIDParam(name) && kind == "int" {
-				return `""`
-			}
-			if isCursorParam(name) && (kind == "int" || kind == "float") {
-				return `""`
-			}
-			return zeroVal(t)
-		},
-		"positionalArgs":         positionalArgs,
-		"configTag":              configTag,
-		"camelToJSON":            camelToJSON,
-		"columnNames":            columnNames,
-		"columnPlaceholders":     columnPlaceholders,
-		"updateSet":              updateSet,
-		"envVarField":            envVarField,
-		"envVarPlaceholder":      naming.EnvVarPlaceholder,
-		"envVarIsBuiltinField":   envVarIsBuiltinField,
-		"envVarBuiltinFieldName": envVarBuiltinFieldName,
-		"resolveEnvVarField":     resolveEnvVarField,
-		"authPlacement":          authPlacement,
-		"authParameterName":      authParameterName,
-		"authCommandShort":       authCommandShort,
-		"authHarvestedEnvHint":   authHarvestedEnvHint,
-		"basicAuthEnvVars":       basicAuthEnvVars,
-		"authAgentEnvVars":       authAgentEnvVars,
-		"hasAuthEnvVarKind":      hasAuthEnvVarKind,
-		"isRequestAuthEnvVar":    isRequestAuthEnvVar,
-		"effectiveTier":          effectiveTier,
-		"effectiveSubTier":       effectiveSubTier,
-		"add":                    func(a, b int) int { return a + b },
-		"oneline":                naming.OneLine,
-		"composeMCPDesc":         composeMCPDesc,
-		"composeMCPSubDesc":      composeMCPSubDesc,
-		"mcpParamDesc":           g.mcpParamDescription,
-		"flagName":               flagName,
-		"paramIdent":             paramIdent,
-		"paramWireName":          paramWireName,
-		"typeFieldIdent":         typeFieldIdent,
-		"safeTypeName":           safeTypeName,
+		"title":                         cases.Title(language.English).String,
+		"lower":                         strings.ToLower,
+		"upper":                         strings.ToUpper,
+		"join":                          strings.Join,
+		"camel":                         toCamel,
+		"snake":                         naming.Snake,
+		"pascal":                        toPascal,
+		"goType":                        goType,
+		"goStructType":                  goStructType,
+		"goTypeForParam":                goTypeForParam,
+		"goTypeForParamRequired":        goTypeForParamRequired,
+		"goStoreType":                   goStoreType,
+		"cobraFlagFunc":                 cobraFlagFunc,
+		"cobraFlagFuncForParam":         cobraFlagFuncForParam,
+		"cobraFlagFuncForParamRequired": cobraFlagFuncForParamRequired,
+		"mcpBindingFunc":                mcpBindingFunc,
+		"recipeParamTypeString":         func(t RecipeIntentParamType) string { return string(t) },
+		"defaultVal":                    defaultVal,
+		"defaultValForParam":            defaultValForParam,
+		"defaultValForParamRequired":    defaultValForParamRequired,
+		"hasDefault":                    paramHasDefault,
+		"isConstDefault":                paramIsConstDefault,
+		"zeroVal":                       zeroVal,
+		"zeroValForParam":               zeroValForParam,
+		"zeroValForParamRequired":       zeroValForParamRequired,
+		"positionalArgs":                positionalArgs,
+		"configTag":                     configTag,
+		"camelToJSON":                   camelToJSON,
+		"columnNames":                   columnNames,
+		"columnPlaceholders":            columnPlaceholders,
+		"updateSet":                     updateSet,
+		"envVarField":                   envVarField,
+		"envVarPlaceholder":             naming.EnvVarPlaceholder,
+		"envVarIsBuiltinField":          envVarIsBuiltinField,
+		"envVarBuiltinFieldName":        envVarBuiltinFieldName,
+		"resolveEnvVarField":            resolveEnvVarField,
+		"authPlacement":                 authPlacement,
+		"authParameterName":             authParameterName,
+		"authCommandShort":              authCommandShort,
+		"authHarvestedEnvHint":          authHarvestedEnvHint,
+		"basicAuthEnvVars":              basicAuthEnvVars,
+		"authAgentEnvVars":              authAgentEnvVars,
+		"hasAuthEnvVarKind":             hasAuthEnvVarKind,
+		"isRequestAuthEnvVar":           isRequestAuthEnvVar,
+		"effectiveTier":                 effectiveTier,
+		"effectiveSubTier":              effectiveSubTier,
+		"add":                           func(a, b int) int { return a + b },
+		"oneline":                       naming.OneLine,
+		"composeMCPDesc":                composeMCPDesc,
+		"composeMCPSubDesc":             composeMCPSubDesc,
+		"mcpParamDesc":                  g.mcpParamDescription,
+		"flagName":                      flagName,
+		"paramIdent":                    paramIdent,
+		"paramWireName":                 paramWireName,
+		"typeFieldIdent":                typeFieldIdent,
+		"safeTypeName":                  safeTypeName,
 		"hasNonScalarType": func(types map[string]spec.TypeDef) bool {
 			for _, td := range types {
 				for _, f := range td.Fields {
@@ -3743,14 +3739,22 @@ func mcpBindingFunc(t string) string {
 	}
 }
 
-// goTypeForParam returns the Go type for a parameter, overriding int→string
-// for ID-like parameters to avoid overflow and zero-value confusion,
+// goTypeForParam returns the Go type for a parameter, overriding bool→string
+// for required bools without defaults so omitted can be distinguished from an
+// explicit false, int→string for ID-like parameters to avoid overflow and zero-value confusion,
 // numeric→string for pagination cursors so they survive scientific-notation
 // rendering of large Unix timestamps and millisecond cursors, and
 // float→int for the canonical `--limit` flag whose semantics are always
 // a count.
 func goTypeForParam(name, t string) string {
+	return goTypeForParamRequired(name, t, false, false)
+}
+
+func goTypeForParamRequired(name, t string, required bool, hasDefault bool) string {
 	kind := primitiveKind(t)
+	if required && !hasDefault && kind == "bool" {
+		return "string"
+	}
 	if isIDParam(name) && kind == "int" {
 		return "string"
 	}
@@ -3763,11 +3767,19 @@ func goTypeForParam(name, t string) string {
 	return goType(t)
 }
 
-// cobraFlagFuncForParam returns the cobra flag function, overriding IntVar→StringVar
-// for ID-like parameters, Float64Var/IntVar→StringVar for pagination cursors,
+// cobraFlagFuncForParam returns the cobra flag function, overriding BoolVar→StringVar
+// for required bools without defaults, IntVar→StringVar for ID-like parameters,
+// Float64Var/IntVar→StringVar for pagination cursors,
 // and Float64Var→IntVar for the canonical `--limit` flag.
 func cobraFlagFuncForParam(name, t string) string {
+	return cobraFlagFuncForParamRequired(name, t, false, false)
+}
+
+func cobraFlagFuncForParamRequired(name, t string, required bool, hasDefault bool) string {
 	kind := primitiveKind(t)
+	if required && !hasDefault && kind == "bool" {
+		return "StringVar"
+	}
 	if isIDParam(name) && kind == "int" {
 		return "StringVar"
 	}
@@ -3781,12 +3793,19 @@ func cobraFlagFuncForParam(name, t string) string {
 }
 
 // defaultValForParam returns the default value for a flag parameter,
-// overriding int→string for ID-like parameters, numeric→string for
-// pagination cursors so the StringVar default matches the StringVar field type,
+// overriding bool→string for required bools without defaults, int→string for
+// ID-like parameters, numeric→string for pagination cursors so the StringVar default matches the StringVar field type,
 // and float→int for the canonical `--limit` flag so the IntVar default
 // matches its coerced int type.
 func defaultValForParam(p spec.Param) string {
+	return defaultValForParamRequired(p, false, false)
+}
+
+func defaultValForParamRequired(p spec.Param, required bool, hasDefault bool) string {
 	kind := primitiveKind(p.Type)
+	if required && !hasDefault && kind == "bool" {
+		return `""`
+	}
 	if isIDParam(p.Name) && kind == "int" {
 		if p.Default != nil {
 			return fmt.Sprintf("%q", fmt.Sprintf("%v", p.Default))
@@ -3805,6 +3824,28 @@ func defaultValForParam(p spec.Param) string {
 		return defaultVal(coerced)
 	}
 	return defaultVal(p)
+}
+
+func zeroValForParam(name, t string) string {
+	return zeroValForParamRequired(name, t, false, false)
+}
+
+func zeroValForParamRequired(name, t string, required bool, hasDefault bool) string {
+	kind := primitiveKind(t)
+	if required && !hasDefault && kind == "bool" {
+		return `""`
+	}
+	if isIDParam(name) && kind == "int" {
+		return `""`
+	}
+	if isCursorParam(name) && (kind == "int" || kind == "float") {
+		return `""`
+	}
+	return zeroVal(t)
+}
+
+func paramHasDefault(p spec.Param) bool {
+	return p.Default != nil
 }
 
 // paramIsConstDefault holds for single-value-enum params whose default
@@ -4059,7 +4100,7 @@ func renderBodyMap(b *strings.Builder, body []spec.Param, depth int, indent, map
 			fmt.Fprintf(b, "%s}\n", indent)
 			continue
 		}
-		if p.Type == "boolean" || p.Type == "bool" {
+		if (p.Type == "boolean" || p.Type == "bool") && !(p.Required && p.Default == nil) {
 			// Booleans gate on cmd.Flags().Changed instead of a zero-guard.
 			// The zero-guard (body != false) drops user-set false values,
 			// letting the server's default (often true) silently invert
@@ -4074,7 +4115,7 @@ func renderBodyMap(b *strings.Builder, body []spec.Param, depth int, indent, map
 			fmt.Fprintf(b, "%s}\n", indent)
 			continue
 		}
-		fmt.Fprintf(b, "%sif body%s != %s {\n", indent, ident, zeroVal(p.Type))
+		fmt.Fprintf(b, "%sif body%s != %s {\n", indent, ident, zeroValForParamRequired(p.Name, p.Type, p.Required, paramHasDefault(p)))
 		fmt.Fprintf(b, "%s\t%s[%q] = body%s\n", indent, mapVar, p.Name, ident)
 		fmt.Fprintf(b, "%s}\n", indent)
 	}
@@ -4100,7 +4141,7 @@ func bodyVarDecls(endpoint spec.Endpoint) string {
 	}
 	if bodyUsesFlatEmission(endpoint) {
 		for _, p := range endpoint.Body {
-			fmt.Fprintf(&b, "\n\tvar body%s %s", toCamel(paramIdent(p)), goType(p.Type))
+			fmt.Fprintf(&b, "\n\tvar body%s %s", toCamel(paramIdent(p)), goTypeForParamRequired(p.Name, p.Type, p.Required, paramHasDefault(p)))
 		}
 		return b.String()
 	}
@@ -4127,7 +4168,7 @@ func renderBodyVarDecls(b *strings.Builder, body []spec.Param, depth int, identP
 			renderBodyVarDecls(b, p.Fields, depth+1, ident)
 			continue
 		}
-		fmt.Fprintf(b, "\n\tvar body%s %s", ident, goType(p.Type))
+		fmt.Fprintf(b, "\n\tvar body%s %s", ident, goTypeForParamRequired(p.Name, p.Type, p.Required, paramHasDefault(p)))
 	}
 }
 
@@ -4180,11 +4221,11 @@ func renderFlatBodyFlagReg(b *strings.Builder, p spec.Param, identPrefix, flagPr
 	flag := joinFlag(flagPrefix, publicFlagName(p))
 	desc := naming.OneLine(p.Description)
 	fmt.Fprintf(b, "\n\tcmd.Flags().%s(&body%s, \"%s\", %s, \"%s\")",
-		cobraFlagFunc(p.Type), ident, flag, defaultVal(p), desc)
+		cobraFlagFuncForParamRequired(p.Name, p.Type, p.Required, paramHasDefault(p)), ident, flag, defaultValForParamRequired(p, p.Required, paramHasDefault(p)), desc)
 	if topLevel {
 		for _, alias := range publicFlagAliases(p) {
 			fmt.Fprintf(b, "\n\tcmd.Flags().%s(&body%s, \"%s\", %s, \"%s\")",
-				cobraFlagFunc(p.Type), ident, alias, defaultVal(p), desc)
+				cobraFlagFuncForParamRequired(p.Name, p.Type, p.Required, paramHasDefault(p)), ident, alias, defaultValForParamRequired(p, p.Required, paramHasDefault(p)), desc)
 			fmt.Fprintf(b, "\n\t_ = cmd.Flags().MarkHidden(\"%s\")", alias)
 		}
 	}
