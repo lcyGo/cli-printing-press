@@ -1150,12 +1150,9 @@ func scoreVision(dir string) int {
 	if fileExists(filepath.Join(cliDir, "tail.go")) {
 		tier1 += 0.5
 	}
-	if fileExists(filepath.Join(cliDir, "import.go")) {
+	if fileExists(filepath.Join(dir, "internal", "learn", "doc.go")) {
 		tier1 += 0.5
 	}
-	// The recall/teach loop is a presence-only credit: a printed CLI that ships
-	// internal/learn/learn.go has the self-learning surface wired even if no
-	// teach traffic has populated it yet. Value compounds with use, not at print
 	// time, so the credit stays modest (+0.5).
 	if fileExists(filepath.Join(dir, "internal", "learn", "learn.go")) {
 		tier1 += 0.5
