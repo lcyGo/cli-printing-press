@@ -436,6 +436,7 @@ func TestMigrate_ResourcesCompositeKeyUpgrade(t *testing.T) {
 	}
 }
 
+{{- if .Learn.Enabled}}
 // TestMigrate_V2ToV3IsAdditive verifies that opening a v2-stamped database
 // preserves existing resources rows after the v3 migration runs. The v3
 // migration only adds new tables (learn tables, when the spec enables them)
@@ -492,6 +493,7 @@ func TestMigrate_V2ToV3IsAdditive(t *testing.T) {
 		t.Fatalf("preserved row payload = %s, want original", data)
 	}
 }
+{{- end}}
 
 // TestOpenReadOnly_RejectsWrites pins the contract: direct and CTE-wrapped
 // writes against the main DB fail under mode=ro. Deliberately does not
