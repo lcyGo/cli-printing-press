@@ -11,43 +11,54 @@ import (
 	"github.com/mvanhorn/cli-printing-press/v4/internal/spec"
 )
 
-// TestGenerateStoreSchemaVersionBumpedToV3 verifies the generator stamps
-// StoreSchemaVersion = 3 into the emitted store package regardless of whether
-// Learn is enabled. The version bump is uniform across learn-enabled and
-// learn-disabled prints of the same printing-press version.
-func TestGenerateStoreSchemaVersionBumpedToV3(t *testing.T) {
+func TestGenerateStoreSchemaVersion_DisabledStaysV2(t *testing.T) {
 	t.Parallel()
 
-	cases := []struct {
-		name         string
-		learnEnabled bool
-	}{
-		{name: "learn-disabled", learnEnabled: false},
-		{name: "learn-enabled", learnEnabled: true},
+	apiSpec := minimalSpec("learn-version-disabled")
+	apiSpec.Learn.Enabled = false
+	outputDir := filepath.Join(t.TempDir(), "learn-version-disabled-pp-cli")
+	gen := New(apiSpec, outputDir)
+	gen.VisionSet = VisionTemplateSet{Store: true}
+	require.NoError(t, gen.Generate())
+
+	storeGo, err := os.ReadFile(filepath.Join(outputDir, "internal", "store", "store.go"))
+	require.NoError(t, err)
+	src := string(storeGo)
+	require.Contains(t, src, "const StoreSchemaVersion = 2")
+	require.NotContains(t, src, "const StoreSchemaVersion = 3")
+	for _, table := range []string{"search_learnings", "search_patterns", "entity_lookups", "teach_log_metadata", "search_learnings_fts"} {
+		require.NotContains(t, src, table, "learn-disabled spec must not emit %s migration", table)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
+}
 
-			apiSpec := minimalSpec("learn-version-" + tc.name)
-			apiSpec.Learn.Enabled = tc.learnEnabled
-			outputDir := filepath.Join(t.TempDir(), "learn-version-pp-cli")
-			gen := New(apiSpec, outputDir)
-			gen.VisionSet = VisionTemplateSet{Store: true}
-			require.NoError(t, gen.Generate())
+func TestGenerateStoreSchemaVersion_EnabledAdvancesToV3WithLearnTables(t *testing.T) {
+	t.Parallel()
 
-			storeGo, err := os.ReadFile(filepath.Join(outputDir, "internal", "store", "store.go"))
-			require.NoError(t, err)
-			require.Contains(t, string(storeGo), "const StoreSchemaVersion = 3", "v3 stamp must be uniform across learn-enabled and learn-disabled prints")
-			require.NotContains(t, string(storeGo), "const StoreSchemaVersion = 2", "the previous version constant must not survive the bump")
-		})
+	apiSpec := minimalSpec("learn-version-enabled")
+	apiSpec.Learn.Enabled = true
+	outputDir := filepath.Join(t.TempDir(), "learn-version-enabled-pp-cli")
+	gen := New(apiSpec, outputDir)
+	gen.VisionSet = VisionTemplateSet{Store: true}
+	require.NoError(t, gen.Generate())
+
+	storeGo, err := os.ReadFile(filepath.Join(outputDir, "internal", "store", "store.go"))
+	require.NoError(t, err)
+	src := string(storeGo)
+	require.Contains(t, src, "const StoreSchemaVersion = 3")
+	require.NotContains(t, src, "const StoreSchemaVersion = 2")
+	for _, want := range []string{
+		"CREATE TABLE IF NOT EXISTS search_learnings",
+		"CREATE TABLE IF NOT EXISTS search_patterns",
+		"CREATE TABLE IF NOT EXISTS entity_lookups",
+		"CREATE TABLE IF NOT EXISTS teach_log_metadata",
+		"CREATE VIRTUAL TABLE IF NOT EXISTS search_learnings_fts",
+	} {
+		require.Contains(t, src, want, "learn-enabled spec must emit %q", want)
 	}
 }
 
 // TestGenerateStoreLearnMigrationsGated verifies the learn-table migrations
-// only emit when Spec.Learn.Enabled is true. The version constant is uniform,
-// but the gate hides the additive table creates so learn-disabled CLIs keep
-// the same on-disk surface.
+// only emit when Spec.Learn.Enabled is true.
 func TestGenerateStoreLearnMigrationsGated(t *testing.T) {
 	t.Parallel()
 
@@ -134,6 +145,19 @@ func TestGenerateStoreCompilesUnderLearnEnabled(t *testing.T) {
 	require.NoError(t, gen.Generate())
 
 	runGoCommand(t, outputDir, "test", "-c", "-o", filepath.Join(t.TempDir(), "store.test"), "./internal/store/...")
+}
+
+func TestGenerateLearnEnabledRequiresStoreVision(t *testing.T) {
+	t.Parallel()
+
+	apiSpec := minimalSpec("learn-no-store")
+	apiSpec.Learn.Enabled = true
+	outputDir := filepath.Join(t.TempDir(), "learn-no-store-pp-cli")
+	gen := New(apiSpec, outputDir)
+	gen.VisionSet = VisionTemplateSet{Store: false, Export: true}
+
+	err := gen.Generate()
+	require.ErrorContains(t, err, "learn.enabled requires VisionSet.Store=true; the learn package depends on internal/store")
 }
 
 // TestLearnConfigIsZeroValueByDefault pins the LearnConfig default-disabled
