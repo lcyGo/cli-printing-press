@@ -23,6 +23,9 @@ import (
 	"net/url"
 {{- end}}
 	"os"
+{{- if and $hasJSONBody (bodyHasStringBackedBool .Endpoint)}}
+	"strconv"
+{{- end}}
 
 	"github.com/spf13/cobra"
 )

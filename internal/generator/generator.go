@@ -328,6 +328,7 @@ func New(s *spec.APISpec, outputDir string) *Generator {
 		"bodyFlagRegs":             bodyFlagRegs,
 		"bodyRequiredChecks":       bodyRequiredChecks,
 		"bodyExceedsFlagDepth":     bodyExceedsFlagDepth,
+		"bodyHasStringBackedBool":  bodyHasStringBackedBool,
 		"multipartBodyMaps":        multipartBodyMaps,
 		"endpointUsesMultipart":    endpointUsesMultipart,
 		"endpointHasQueryFlags":    endpointHasQueryFlags,
@@ -4100,9 +4101,40 @@ func renderBodyMap(b *strings.Builder, body []spec.Param, depth int, indent, map
 			continue
 		}
 		fmt.Fprintf(b, "%sif body%s != %s {\n", indent, ident, zeroValForParamRequired(p.Name, p.Type, p.Required, paramHasDefault(p)))
-		fmt.Fprintf(b, "%s\t%s[%q] = body%s\n", indent, mapVar, p.Name, ident)
+		if isStringBackedBoolParam(p) {
+			fmt.Fprintf(b, "%s\tparsed%s, err := strconv.ParseBool(body%s)\n", indent, ident, ident)
+			fmt.Fprintf(b, "%s\tif err != nil {\n", indent)
+			fmt.Fprintf(b, "%s\t\treturn fmt.Errorf(\"parsing --%s as bool: %%w\", err)\n", indent, flag)
+			fmt.Fprintf(b, "%s\t}\n", indent)
+			fmt.Fprintf(b, "%s\t%s[%q] = parsed%s\n", indent, mapVar, p.Name, ident)
+		} else {
+			fmt.Fprintf(b, "%s\t%s[%q] = body%s\n", indent, mapVar, p.Name, ident)
+		}
 		fmt.Fprintf(b, "%s}\n", indent)
 	}
+}
+
+func bodyHasStringBackedBool(endpoint spec.Endpoint) bool {
+	if endpoint.BodyJSONFallback {
+		return false
+	}
+	var walk func([]spec.Param) bool
+	walk = func(params []spec.Param) bool {
+		for _, p := range params {
+			if isStringBackedBoolParam(p) {
+				return true
+			}
+			if p.Type == "object" && len(p.Fields) > 0 && walk(p.Fields) {
+				return true
+			}
+		}
+		return false
+	}
+	return walk(endpoint.Body)
+}
+
+func isStringBackedBoolParam(p spec.Param) bool {
+	return p.Required && p.Default == nil && primitiveKind(p.Type) == "bool"
 }
 
 // bodyVarDecls renders Go var declarations for body construction. For
@@ -4345,7 +4377,7 @@ func multipartBodyMaps(body []spec.Param, indent string) string {
 			fmt.Fprintf(&b, "%s}\n", indent)
 			continue
 		}
-		fmt.Fprintf(&b, "%sif body%s != %s {\n", indent, ident, zeroVal(p.Type))
+		fmt.Fprintf(&b, "%sif body%s != %s {\n", indent, ident, zeroValForParamRequired(p.Name, p.Type, p.Required, paramHasDefault(p)))
 		fmt.Fprintf(&b, "%s\tfields[%q] = fmt.Sprintf(\"%%v\", body%s)\n", indent, p.Name, ident)
 		fmt.Fprintf(&b, "%s}\n", indent)
 	}
@@ -4486,7 +4518,7 @@ func formBodyMaps(body []spec.Param, indent string) string {
 			fmt.Fprintf(&b, "%s}\n", indent)
 			continue
 		}
-		fmt.Fprintf(&b, "%sif body%s != %s {\n", indent, ident, zeroVal(p.Type))
+		fmt.Fprintf(&b, "%sif body%s != %s {\n", indent, ident, zeroValForParamRequired(p.Name, p.Type, p.Required, paramHasDefault(p)))
 		fmt.Fprintf(&b, "%s\tfields.Set(%q, fmt.Sprintf(\"%%v\", body%s))\n", indent, p.Name, ident)
 		fmt.Fprintf(&b, "%s}\n", indent)
 	}

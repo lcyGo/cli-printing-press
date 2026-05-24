@@ -21,6 +21,9 @@ import (
 	"net/url"
 {{- end}}
 	"os"
+{{- if and $hasJSONBody (bodyHasStringBackedBool .Endpoint)}}
+	"strconv"
+{{- end}}
 {{- if .IsAsync}}
 	"time"
 {{- end}}
