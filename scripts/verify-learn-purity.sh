@@ -33,14 +33,18 @@ watch_terms=(
   "prediction_goat"
 )
 
-# Gather every learn template path. Two shapes:
+# Gather every learn template path. Four shapes:
 #   - internal/generator/templates/learn*.go.tmpl       (flat helpers)
+#   - internal/generator/templates/learn/*.go.tmpl      (learn package)
 #   - internal/generator/templates/learn_*/*.go.tmpl    (package subdirs)
+#   - internal/generator/templates/teach*.go.tmpl       (learn CLI commands)
 # `find` returns empty when no matches; the empty-check below handles that.
 # Avoid `mapfile` for portability with macOS bash 3.2.
 templates_list="$(
   {
     find "$templates_root" -maxdepth 1 -type f -name 'learn*.go.tmpl' 2>/dev/null || true
+    find "$templates_root" -mindepth 2 -type f -path '*/learn/*.go.tmpl' 2>/dev/null || true
+    find "$templates_root" -maxdepth 1 -type f -name 'teach*.go.tmpl' 2>/dev/null || true
     find "$templates_root" -mindepth 2 -type f -path '*/learn_*/*.go.tmpl' 2>/dev/null || true
   } | sort -u
 )"

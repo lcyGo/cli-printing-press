@@ -828,14 +828,14 @@ func newTeachPatternCmd(flags *rootFlags) *cobra.Command {
 		Short: "Install a manual generalization pattern (query_template, resource_template, entity_kind)",
 		Long: `Adds one row to search_patterns. The recall path uses patterns to
 substitute live query entities into a resource template, so a pattern
-with query_template="odds {entity} wins world cup" and
-resource_template="WORLDCUP-{entity:country}" generalizes one teach
-into a whole family.`,
+with query_template="items in {entity}" and
+resource_template="GROUP-{entity:category}" generalizes one teach into
+a whole family.`,
 		Example: `  learn-loop-example-pp-cli teach-pattern \
-    --query-template "odds {entity} wins world cup" \
-    --resource-template "WORLDCUP-{entity:country}" \
-    --resource-type "events" \
-    --entity-kind "country" \
+    --query-template "items in {entity}" \
+    --resource-template "GROUP-{entity:category}" \
+    --resource-type "items" \
+    --entity-kind "category" \
     --strategy substitute`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if dryRunOK(flags) {
