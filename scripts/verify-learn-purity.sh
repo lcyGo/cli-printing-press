@@ -71,10 +71,9 @@ while IFS= read -r tmpl; do
       # in real code and remains a failure). The check below would only fire
       # if a non-comment line referenced the term in doc.go.tmpl, which is
       # still wrong.
-      if [[ "$base" == "doc.go.tmpl" && "$term" == "prediction_goat" ]]; then
-        echo "verify-learn-purity: allowlist hit (prediction-goat lineage in $rel) — ignored"
-        continue
-      fi
+      # No allowlist needed: full-line // comments are already stripped above,
+      # so prediction_goat in doc.go.tmpl comments never reaches this branch.
+      # Any hit here is in real code and must fail.
       echo "::error file=${rel}::learn template contains prohibited domain identifier '${term}'"
       echo "  See docs/plans/2026-05-23-002-feat-generator-wide-self-learning-cli-plan.md (Domain words prohibition)."
       fail=1
