@@ -1725,6 +1725,18 @@ func (g *Generator) renderOptionalSupportFiles() error {
 		if err := g.renderTemplate("teach_test.go.tmpl", filepath.Join("internal", "cli", "teach_test.go"), g.Spec); err != nil {
 			return fmt.Errorf("rendering teach commands test: %w", err)
 		}
+		// learn_init.go translates spec.Learn (ticker patterns, stopwords,
+		// entity-lookup seeds) into a runtime *entities.Config and seeds
+		// the entity_lookups table at first start. Owns newLearnConfig()
+		// (which teach.go's command constructors call) and initLearn(),
+		// which root.go invokes from PersistentPreRunE under the same
+		// Learn.Enabled gate.
+		if err := g.renderTemplate("learn_init.go.tmpl", filepath.Join("internal", "cli", "learn_init.go"), g.Spec); err != nil {
+			return fmt.Errorf("rendering learn init: %w", err)
+		}
+		if err := g.renderTemplate("learn_init_test.go.tmpl", filepath.Join("internal", "cli", "learn_init_test.go"), g.Spec); err != nil {
+			return fmt.Errorf("rendering learn init test: %w", err)
+		}
 	}
 
 	if g.FixtureSet != nil {

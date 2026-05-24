@@ -328,6 +328,16 @@ Run '{{.Name}}-pp-cli doctor' to verify auth and connectivity.{{backtick}},
 			flags.freshnessMeta = autoRefreshIfStale(cmd.Context(), flags, resources)
 		}
 {{- end}}
+{{- if .Learn.Enabled}}
+		// Seed entity_lookups from spec.Learn.EntityLookupSeeds once per
+		// process. Skipped for framework commands that should never
+		// touch the local store (auth, doctor, help, etc.) and for
+		// --no-learn invocations so deterministic agent flows don't
+		// race a background seed.
+		if !noLearnActive(flags) && !shouldSkipLearnHook(cmd.Name()) {
+			runLearnInitOnce(cmd.Context())
+		}
+{{- end}}
 		return nil
 	}
 
@@ -388,10 +398,11 @@ Run '{{.Name}}-pp-cli doctor' to verify auth and connectivity.{{backtick}},
 {{- end}}
 	rootCmd.AddCommand(newVersionCliCmd())
 {{- if .Learn.Enabled}}
-	// Self-learning loop commands. The init shim that constructs the
-	// per-CLI *entities.Config from spec.Learn lands in a follow-up
-	// unit (U8); for now newLearnConfig() returns a minimal default
-	// Config so the commands compile and run with built-in stopwords.
+	// Self-learning loop commands. newLearnConfig (defined in
+	// learn_init.go) reads spec.Learn.TickerPatterns + Stopwords and
+	// returns a configured *entities.Config every call site shares;
+	// initLearn seeds entity_lookups from spec.Learn.EntityLookupSeeds
+	// once per process via the PersistentPreRunE hook above.
 	learnCfg := newLearnConfig()
 	rootCmd.AddCommand(newTeachCmd(flags, learnCfg))
 	rootCmd.AddCommand(newRecallCmd(flags, learnCfg))

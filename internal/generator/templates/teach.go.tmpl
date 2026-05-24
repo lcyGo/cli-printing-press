@@ -136,20 +136,6 @@ type silentSentinel struct{}
 
 func (silentSentinel) Error() string { return "" }
 
-// newLearnConfig returns the per-CLI entity extractor Config used by
-// every teach / recall / normalize call site.
-//
-// This is the U7 placeholder: it returns a Config preloaded with the
-// generator-default English stopwords and no ticker patterns. U8 will
-// replace this body with a spec-driven init shim that consults the
-// emitted spec.Learn.TickerPatterns + spec.Learn.Stopwords and runs
-// lookups.SeedFromConfig against the live store at first call. Until
-// then, the surface compiles and the learn loop works with built-in
-// defaults so the cobra commands are exercised end-to-end.
-func newLearnConfig() *entities.Config {
-	return entities.NewConfig()
-}
-
 // learnDBPath resolves the SQLite path the learn commands should use:
 // the explicit --db flag wins, otherwise the canonical default.
 func learnDBPath(explicit string) string {
