@@ -286,13 +286,15 @@ func New(s *spec.APISpec, outputDir string) *Generator {
 		"graphqlFieldSelection": func(typeName string, types map[string]spec.TypeDef) []string {
 			return graphqlFieldSelection(typeName, types)
 		},
-		"isGraphQL":           isGraphQLSpec,
-		"exportableResources": exportableResources,
-		"backtick":            func() string { return "`" },
-		"kebab":               toKebab,
-		"humanName":           naming.HumanName,
-		"envPrefix":           naming.EnvPrefix,
-		"mcpToolName":         naming.SnakeIdentifier,
+		"isGraphQL":             isGraphQLSpec,
+		"localReadIsList":       localReadIsList,
+		"networkFallbackReason": networkFallbackReason,
+		"exportableResources":   exportableResources,
+		"backtick":              func() string { return "`" },
+		"kebab":                 toKebab,
+		"humanName":             naming.HumanName,
+		"envPrefix":             naming.EnvPrefix,
+		"mcpToolName":           naming.SnakeIdentifier,
 		"lookupEndpoint": func(api *spec.APISpec, ref string) templateEndpoint {
 			e, _ := lookupEndpointForTemplate(api, ref)
 			return e
@@ -1696,6 +1698,17 @@ func (g *Generator) renderOptionalSupportFiles() error {
 		}
 	}
 
+	// Persistent cookie jar — emitted only when the spec declares cookies
+	// (cookie or composed auth). Non-cookie CLIs (api_key, bearer, oauth2,
+	// session_handshake, Auth0-SPA) don't need the helper and get the same
+	// byte-identical client.go they always did. The session_handshake path
+	// uses sess.CookieJar() and bypasses this file entirely.
+	if g.Spec.Auth.HasCookies() && g.Spec.Auth.Type != "session_handshake" {
+		if err := g.renderTemplate("cookiejar.go.tmpl", filepath.Join("internal", "client", "cookiejar.go"), g.Spec); err != nil {
+			return fmt.Errorf("rendering cookie jar: %w", err)
+		}
+	}
+
 	// For GraphQL specs, emit additional client files (GraphQL transport + query constants)
 	if isGraphQLSpec(g.Spec) {
 		if err := g.renderTemplate("graphql_client.go.tmpl", filepath.Join("internal", "client", "graphql.go"), g.Spec); err != nil {
@@ -2496,6 +2509,7 @@ type visionRenderData struct {
 	SyncableResources            []profiler.SyncableResource
 	DependentSyncResources       []profiler.DependentResource
 	PaginationSupportedResources []string
+	SpecTimestampFields          []string
 	SearchableFields             map[string][]string
 	Tables                       []TableDef
 	Pagination                   profiler.PaginationProfile
@@ -2589,6 +2603,56 @@ func paginationSupportedResources(syncable []profiler.SyncableResource, dependen
 	return names
 }
 
+func specDateTimeFieldNames(api *spec.APISpec) []string {
+	if api == nil {
+		return nil
+	}
+
+	fields := map[string]struct{}{}
+	addName := func(name, format string) {
+		if strings.EqualFold(format, "date-time") && strings.TrimSpace(name) != "" {
+			fields[name] = struct{}{}
+		}
+	}
+
+	var walkParams func(params []spec.Param)
+	walkParams = func(params []spec.Param) {
+		for _, p := range params {
+			addName(p.Name, p.Format)
+			if len(p.Fields) > 0 {
+				walkParams(p.Fields)
+			}
+		}
+	}
+
+	var walkResource func(resource spec.Resource)
+	walkResource = func(resource spec.Resource) {
+		for _, endpoint := range resource.Endpoints {
+			walkParams(endpoint.Params)
+			walkParams(endpoint.Body)
+		}
+		for _, sub := range resource.SubResources {
+			walkResource(sub)
+		}
+	}
+
+	for _, typeDef := range api.Types {
+		for _, f := range typeDef.Fields {
+			addName(f.Name, f.Format)
+		}
+	}
+	for _, resource := range api.Resources {
+		walkResource(resource)
+	}
+
+	names := make([]string, 0, len(fields))
+	for name := range fields {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
 func (g *Generator) visionRenderData(schema []TableDef) visionRenderData {
 	gqlFieldPaths := map[string]string{}
 	for rName, r := range g.Spec.Resources {
@@ -2602,6 +2666,7 @@ func (g *Generator) visionRenderData(schema []TableDef) visionRenderData {
 		SyncableResources:            g.profile.SyncableResources,
 		DependentSyncResources:       g.profile.DependentSyncResources,
 		PaginationSupportedResources: paginationSupportedResources(g.profile.SyncableResources, g.profile.DependentSyncResources),
+		SpecTimestampFields:          specDateTimeFieldNames(g.Spec),
 		SearchableFields:             g.profile.SearchableFields,
 		Tables:                       schema,
 		Pagination:                   g.profile.Pagination,
@@ -2787,7 +2852,7 @@ func (g *Generator) renderWorkflowFiles(visionData visionRenderData) ([]string, 
 	for _, tmpl := range g.VisionSet.Workflows {
 		outName := strings.TrimSuffix(filepath.Base(tmpl), ".tmpl")
 		outPath := filepath.Join("internal", "cli", outName)
-		if err := g.renderTemplate(tmpl, outPath, g.Spec); err != nil {
+		if err := g.renderTemplate(tmpl, outPath, visionData); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: skipping workflow template %s: %v\n", tmpl, err)
 			continue
 		}
@@ -3901,9 +3966,13 @@ func mcpParamBindings(endpoint spec.Endpoint, pathTemplate string) []mcpParamBin
 		if strings.Contains(pathTemplate, "{"+p.Name+"}") {
 			loc = "path"
 		}
+		wireName := p.WireName()
+		if loc == "path" {
+			wireName = p.Name
+		}
 		bindings = append(bindings, mcpParamBinding{
 			PublicName:         p.PublicInputName(),
-			WireName:           p.Name,
+			WireName:           wireName,
 			Location:           loc,
 			RequestContentType: requestContentType,
 		})
@@ -3922,7 +3991,7 @@ func mcpParamBindings(endpoint spec.Endpoint, pathTemplate string) []mcpParamBin
 	for _, p := range endpoint.Body {
 		bindings = append(bindings, mcpParamBinding{
 			PublicName:         p.PublicInputName(),
-			WireName:           p.Name,
+			WireName:           p.BodyWireName(),
 			Location:           "body",
 			Format:             multipartBindingFormat(endpoint, p),
 			RequestContentType: requestContentType,
@@ -4062,7 +4131,7 @@ func renderBodyMap(b *strings.Builder, body []spec.Param, depth int, indent, map
 			fmt.Fprintf(b, "%s\t%s := map[string]any{}\n", indent, nestedMap)
 			renderBodyMap(b, p.Fields, depth+1, indent+"\t", nestedMap, ident, flag)
 			fmt.Fprintf(b, "%s\tif len(%s) > 0 {\n", indent, nestedMap)
-			fmt.Fprintf(b, "%s\t\t%s[%q] = %s\n", indent, mapVar, p.Name, nestedMap)
+			fmt.Fprintf(b, "%s\t\t%s[%q] = %s\n", indent, mapVar, p.BodyWireName(), nestedMap)
 			fmt.Fprintf(b, "%s\t}\n", indent)
 			fmt.Fprintf(b, "%s}\n", indent)
 			continue
@@ -4081,7 +4150,7 @@ func renderBodyMap(b *strings.Builder, body []spec.Param, depth int, indent, map
 			fmt.Fprintf(b, "%s\tif err := json.Unmarshal([]byte(body%s), &parsed%s); err != nil {\n", indent, ident, ident)
 			fmt.Fprintf(b, "%s\t\treturn fmt.Errorf(\"parsing --%s JSON: %%w\", err)\n", indent, flag)
 			fmt.Fprintf(b, "%s\t}\n", indent)
-			fmt.Fprintf(b, "%s\t%s[%q] = %s\n", indent, mapVar, p.Name, rhs)
+			fmt.Fprintf(b, "%s\t%s[%q] = %s\n", indent, mapVar, p.BodyWireName(), rhs)
 			fmt.Fprintf(b, "%s}\n", indent)
 			continue
 		}
@@ -4096,7 +4165,7 @@ func renderBodyMap(b *strings.Builder, body []spec.Param, depth int, indent, map
 			// for POST, PUT, and PATCH. Internal YAML specs use "boolean";
 			// the OpenAPI parser normalizes to "bool".
 			fmt.Fprintf(b, "%sif cmd.Flags().Changed(%q) {\n", indent, flag)
-			fmt.Fprintf(b, "%s\t%s[%q] = body%s\n", indent, mapVar, p.Name, ident)
+			fmt.Fprintf(b, "%s\t%s[%q] = body%s\n", indent, mapVar, p.BodyWireName(), ident)
 			fmt.Fprintf(b, "%s}\n", indent)
 			continue
 		}
@@ -4106,9 +4175,9 @@ func renderBodyMap(b *strings.Builder, body []spec.Param, depth int, indent, map
 			fmt.Fprintf(b, "%s\tif err != nil {\n", indent)
 			fmt.Fprintf(b, "%s\t\treturn fmt.Errorf(\"parsing --%s as bool: %%w\", err)\n", indent, flag)
 			fmt.Fprintf(b, "%s\t}\n", indent)
-			fmt.Fprintf(b, "%s\t%s[%q] = parsed%s\n", indent, mapVar, p.Name, ident)
+			fmt.Fprintf(b, "%s\t%s[%q] = parsed%s\n", indent, mapVar, p.BodyWireName(), ident)
 		} else {
-			fmt.Fprintf(b, "%s\t%s[%q] = body%s\n", indent, mapVar, p.Name, ident)
+			fmt.Fprintf(b, "%s\t%s[%q] = body%s\n", indent, mapVar, p.BodyWireName(), ident)
 		}
 		fmt.Fprintf(b, "%s}\n", indent)
 	}
@@ -4361,24 +4430,24 @@ func multipartBodyMaps(body []spec.Param, indent string) string {
 			fmt.Fprintf(&b, "%s\tif !json.Valid([]byte(body%s)) {\n", indent, ident)
 			fmt.Fprintf(&b, "%s\t\treturn fmt.Errorf(\"parsing --%s JSON: invalid JSON\")\n", indent, flag)
 			fmt.Fprintf(&b, "%s\t}\n", indent)
-			fmt.Fprintf(&b, "%s\tfields[%q] = body%s\n", indent, p.Name, ident)
+			fmt.Fprintf(&b, "%s\tfields[%q] = body%s\n", indent, p.BodyWireName(), ident)
 			fmt.Fprintf(&b, "%s}\n", indent)
 			continue
 		}
 		if isBinaryParam(p) {
 			fmt.Fprintf(&b, "%sif body%s != \"\" {\n", indent, ident)
-			fmt.Fprintf(&b, "%s\tfileFields[%q] = body%s\n", indent, p.Name, ident)
+			fmt.Fprintf(&b, "%s\tfileFields[%q] = body%s\n", indent, p.BodyWireName(), ident)
 			fmt.Fprintf(&b, "%s}\n", indent)
 			continue
 		}
 		if p.Type == "string" {
 			fmt.Fprintf(&b, "%sif body%s != \"\" {\n", indent, ident)
-			fmt.Fprintf(&b, "%s\tfields[%q] = body%s\n", indent, p.Name, ident)
+			fmt.Fprintf(&b, "%s\tfields[%q] = body%s\n", indent, p.BodyWireName(), ident)
 			fmt.Fprintf(&b, "%s}\n", indent)
 			continue
 		}
 		fmt.Fprintf(&b, "%sif body%s != %s {\n", indent, ident, zeroValForParamRequired(p.Name, p.Type, p.Required, paramHasDefault(p)))
-		fmt.Fprintf(&b, "%s\tfields[%q] = fmt.Sprintf(\"%%v\", body%s)\n", indent, p.Name, ident)
+		fmt.Fprintf(&b, "%s\tfields[%q] = fmt.Sprintf(\"%%v\", body%s)\n", indent, p.BodyWireName(), ident)
 		fmt.Fprintf(&b, "%s}\n", indent)
 	}
 	return b.String()
@@ -4508,18 +4577,18 @@ func formBodyMaps(body []spec.Param, indent string) string {
 			fmt.Fprintf(&b, "%s\tif !json.Valid([]byte(body%s)) {\n", indent, ident)
 			fmt.Fprintf(&b, "%s\t\treturn fmt.Errorf(\"parsing --%s JSON: invalid JSON\")\n", indent, flag)
 			fmt.Fprintf(&b, "%s\t}\n", indent)
-			fmt.Fprintf(&b, "%s\tfields.Set(%q, body%s)\n", indent, p.Name, ident)
+			fmt.Fprintf(&b, "%s\tfields.Set(%q, body%s)\n", indent, p.BodyWireName(), ident)
 			fmt.Fprintf(&b, "%s}\n", indent)
 			continue
 		}
 		if p.Type == "string" {
 			fmt.Fprintf(&b, "%sif body%s != \"\" {\n", indent, ident)
-			fmt.Fprintf(&b, "%s\tfields.Set(%q, body%s)\n", indent, p.Name, ident)
+			fmt.Fprintf(&b, "%s\tfields.Set(%q, body%s)\n", indent, p.BodyWireName(), ident)
 			fmt.Fprintf(&b, "%s}\n", indent)
 			continue
 		}
 		fmt.Fprintf(&b, "%sif body%s != %s {\n", indent, ident, zeroValForParamRequired(p.Name, p.Type, p.Required, paramHasDefault(p)))
-		fmt.Fprintf(&b, "%s\tfields.Set(%q, fmt.Sprintf(\"%%v\", body%s))\n", indent, p.Name, ident)
+		fmt.Fprintf(&b, "%s\tfields.Set(%q, fmt.Sprintf(\"%%v\", body%s))\n", indent, p.BodyWireName(), ident)
 		fmt.Fprintf(&b, "%s}\n", indent)
 	}
 	return b.String()
@@ -5415,6 +5484,9 @@ func sortedEndpointNames(endpoints map[string]spec.Endpoint) []string {
 // isGraphQLSpec returns true if the spec was produced by a GraphQL SDL parser.
 // Detection heuristic: all list endpoints have path "/graphql".
 func isGraphQLSpec(s *spec.APISpec) bool {
+	if s == nil {
+		return false
+	}
 	hasListEndpoint := false
 	for _, r := range s.Resources {
 		for eName, ep := range r.Endpoints {
@@ -5427,6 +5499,51 @@ func isGraphQLSpec(s *spec.APISpec) bool {
 		}
 	}
 	return hasListEndpoint
+}
+
+func networkFallbackReason(s *spec.APISpec) string {
+	if s == nil {
+		return "api_unreachable"
+	}
+	if s.IsSynthetic() {
+		return "synthetic_anchor_fallback"
+	}
+	u, err := url.Parse(strings.TrimSpace(s.BaseURL))
+	// In Printing Press specs, .local base URLs are synthetic placeholders.
+	// Real mDNS/private hosts should use a non-.local alias to avoid being
+	// classified as synthetic fallback surfaces.
+	if err == nil && strings.HasSuffix(strings.ToLower(u.Hostname()), ".local") {
+		return "synthetic_anchor_fallback"
+	}
+	return "api_unreachable"
+}
+
+func localReadIsList(supportsAllPagination bool, apiSpec *spec.APISpec, endpointName string, endpoint spec.Endpoint) bool {
+	if supportsAllPagination {
+		return true
+	}
+	if endpointHasPathScope(endpoint) {
+		return false
+	}
+	if strings.EqualFold(endpointName, "list") {
+		return true
+	}
+	return networkFallbackReason(apiSpec) == "synthetic_anchor_fallback" && strings.EqualFold(endpoint.Response.Type, "array")
+}
+
+func endpointHasPathScope(endpoint spec.Endpoint) bool {
+	// Parsed specs and hand-authored fixtures may disagree between the path
+	// string and normalized Param flags; either signal means local List would
+	// over-return rows across parents.
+	if strings.Contains(endpoint.Path, "{") {
+		return true
+	}
+	for _, p := range endpoint.Params {
+		if p.PathParam {
+			return true
+		}
+	}
+	return false
 }
 
 // graphqlQueryField extracts the GraphQL query field name from a ResponsePath.

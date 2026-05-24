@@ -12,17 +12,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"golden-api-cookie-auth-pp-cli/internal/cliutil"
+	"golden-api-cookie-auth-pp-cli/internal/config"
 	"io"
 	"math"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
-	"printing-press-oauth2-pp-cli/internal/cliutil"
-	"printing-press-oauth2-pp-cli/internal/config"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -38,10 +37,6 @@ type Client struct {
 	NoCache    bool
 	cacheDir   string
 	limiter    *cliutil.AdaptiveLimiter
-	// ccMu serializes OAuth2 client_credentials token mints so concurrent
-	// API calls inside the 60s pre-expiry window don't all dial the token
-	// endpoint and race on Config field writes / file persistence.
-	ccMu *sync.Mutex
 }
 
 // APIError carries HTTP status information for structured exit codes.
@@ -62,15 +57,14 @@ func newHTTPClient(timeout time.Duration, jar http.CookieJar) *http.Client {
 
 func New(cfg *config.Config, timeout time.Duration, rateLimit float64) *Client {
 	homeDir, _ := os.UserHomeDir()
-	cacheDir := filepath.Join(homeDir, ".cache", "printing-press-oauth2-pp-cli", "http")
-	httpClient := newHTTPClient(timeout, nil)
+	cacheDir := filepath.Join(homeDir, ".cache", "golden-api-cookie-auth-pp-cli", "http")
+	httpClient := newHTTPClient(timeout, LoadCookieJar())
 	c := &Client{
 		BaseURL:    strings.TrimRight(cfg.BaseURL, "/"),
 		Config:     cfg,
 		HTTPClient: httpClient,
 		cacheDir:   cacheDir,
 		limiter:    cliutil.NewAdaptiveLimiter(rateLimit),
-		ccMu:       &sync.Mutex{},
 	}
 	// CheckRedirect re-derives auth on each hop. Go's default replays the
 	// original Authorization header verbatim, which breaks nonce-bound
@@ -88,20 +82,10 @@ func New(cfg *config.Config, timeout time.Duration, rateLimit float64) *Client {
 			// "Moved Permanently" body back to the caller.
 			return errors.New("stopped after 10 redirects")
 		}
-		// Same-host gate mirrors Go's shouldCopyHeaderOnRedirect: a
-		// cross-domain 3xx (open redirect or partner handoff) must not
-		// receive the auth credential, even though we are inside
-		// CheckRedirect where Go's automatic stripping has already run.
-		if req.URL.Host == via[0].URL.Host {
-			if h, err := c.authHeader(req.Context()); err == nil && h != "" {
-				req.Header.Set("Authorization", h)
-			}
-		} else {
-			// Cross-host hop: Go strips standard auth headers (Authorization,
-			// Cookie) but not custom ones, so a custom API-key header would be
-			// forwarded verbatim to the redirect target. Delete it explicitly.
-			req.Header.Del("Authorization")
-		}
+		// Cookie-auth redirects: Go's http.Client + http.CookieJar handle
+		// cookie carriage on 3xx hops natively. Setting the Cookie header
+		// manually here would double the jar's cookies on the redirected
+		// request.
 		return nil
 	}
 	return c
@@ -195,10 +179,6 @@ func binaryResponseHeaderValue(headers map[string]string) (bool, bool) {
 func (c *Client) validateCachedRequestAuth(ctx context.Context) error {
 	if c == nil || c.Config == nil {
 		return nil
-	}
-	clientID, clientSecret := resolveClientCredentials(c.Config)
-	if authHeaderLooksLikePlaceholderCredential(clientID) || authHeaderLooksLikePlaceholderCredential(clientSecret) {
-		return authPlaceholderCredentialError(c.Config)
 	}
 	if authHeaderLooksLikePlaceholderCredential(c.Config.AuthHeader()) {
 		return authPlaceholderCredentialError(c.Config)
@@ -498,7 +478,15 @@ func (c *Client) doInternal(ctx context.Context, method, path string, params map
 		}
 
 		if authHeader != "" {
-			req.Header.Set("Authorization", authHeader)
+			// Cookie-auth: LoadCookieJar is the sole source of outbound
+			// cookies. net/http's Client.send calls jar.Cookies + AddCookie
+			// for each cookie, which concatenates without dedup; a manual
+			// req.Header.Set here would ship every session cookie twice and
+			// trip upstream WAFs. auth login persists the same cookie set
+			// to both the jar and config, so the jar carries every value
+			// SaveTokens stores. authHeader is read only by the dry-run /
+			// signing paths above; intentionally not consumed on the live
+			// wire here.
 		}
 		if c.Config != nil {
 			for k, v := range c.Config.Headers {
@@ -514,7 +502,15 @@ func (c *Client) doInternal(ctx context.Context, method, path string, params map
 			req.Header.Del(BinaryResponseHeader)
 		}
 		if req.Header.Get("User-Agent") == "" {
-			req.Header.Set("User-Agent", "printing-press-oauth2-pp-cli/1.0.0")
+			// Browser-shaped UA: synthetic specs and cookie/composed/
+			// session_handshake auth almost always target website-itself
+			// origins whose WAFs (Wordfence, Imperva, Akamai bot-mode,
+			// DataDome, Cloudflare bot-fight) bucket the script-shaped
+			// `<cli>-pp-cli/<version>` string as a bot and answer with
+			// empty 5xx or a challenge. RequiredHeaders or per-endpoint
+			// headerOverrides still win, and any caller that wants the
+			// CLI-flavored UA can set it on the request explicitly.
+			req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36")
 		}
 		// Go's net/http omits Accept by default; browsers, curl, and other
 		// stdlibs always send it. Fingerprint-checking WAFs (Imperva, Akamai,
@@ -645,7 +641,7 @@ func (c *Client) dryRun(method, targetURL, path string, params map[string]string
 		}
 	}
 	if authHeader != "" {
-		fmt.Fprintf(os.Stderr, "  %s: %s\n", "Authorization", maskToken(authHeader))
+		fmt.Fprintf(os.Stderr, "  %s: %s\n", "Cookie", maskToken(authHeader))
 	}
 	fmt.Fprintf(os.Stderr, "\n(dry run - no request sent)\n")
 	return json.RawMessage(`{"dry_run": true}`), 0, nil
@@ -661,32 +657,6 @@ func (c *Client) ConfiguredTimeout() time.Duration {
 func (c *Client) authHeader(ctx context.Context) (string, error) {
 	if c.Config == nil {
 		return "", nil
-	}
-	if c.Config.AccessToken == "" && cliutil.IsVerifyEnv() {
-		c.Config.AccessToken = "mock-token-for-testing"
-		return c.Config.AuthHeader(), nil
-	}
-	// 60s window avoids in-flight requests racing the expiry boundary.
-	// Double-checked lock so only one goroutine mints under contention.
-	if needsClientCredentialsMint(c.Config) {
-		if c.ccMu == nil {
-			c.ccMu = &sync.Mutex{}
-		}
-		c.ccMu.Lock()
-		if needsClientCredentialsMint(c.Config) {
-			clientID, clientSecret := resolveClientCredentials(c.Config)
-			if clientID != "" && clientSecret != "" {
-				if authHeaderLooksLikePlaceholderCredential(clientID) || authHeaderLooksLikePlaceholderCredential(clientSecret) {
-					c.ccMu.Unlock()
-					return "", authPlaceholderCredentialError(c.Config)
-				}
-				if err := c.mintClientCredentials(ctx, clientID, clientSecret); err != nil {
-					c.ccMu.Unlock()
-					return "", err
-				}
-			}
-		}
-		c.ccMu.Unlock()
 	}
 	authHeader := c.Config.AuthHeader()
 	if authHeaderLooksLikePlaceholderCredential(authHeader) {
@@ -741,7 +711,7 @@ func looksLikeCredentialPlaceholder(value string) bool {
 }
 
 func authPlaceholderCredentialError(cfg *config.Config) error {
-	return authPlaceholderCredentialErrorWithSetup(cfg, "printing-press-oauth2-pp-cli auth login or printing-press-oauth2-pp-cli auth set-token <token>")
+	return authPlaceholderCredentialErrorWithSetup(cfg, "export COOKIE_AUTH_SESSION=<your-token> or golden-api-cookie-auth-pp-cli auth set-token <token>")
 }
 
 func authPlaceholderCredentialErrorWithSetup(cfg *config.Config, setup string) error {
@@ -750,152 +720,6 @@ func authPlaceholderCredentialErrorWithSetup(cfg *config.Config, setup string) e
 		location = cfg.Path
 	}
 	return fmt.Errorf("%w configured in %s; set a real token with: %s", ErrPlaceholderCredential, location, setup)
-}
-
-func needsClientCredentialsMint(cfg *config.Config) bool {
-	if cfg.AccessToken == "" {
-		return true
-	}
-	if cfg.TokenExpiry.IsZero() {
-		return false
-	}
-	return time.Until(cfg.TokenExpiry) < 60*time.Second
-}
-
-// resolveClientCredentials prefers what was passed to `auth login` (cached
-// in config) and falls back to environment variables so first-time users
-// can ship without a separate login step.
-func resolveClientCredentials(cfg *config.Config) (string, string) {
-	id := cfg.ClientID
-	secret := cfg.ClientSecret
-	if id == "" {
-		id = os.Getenv("PRINTING_PRESS_OAUTH2_CLIENT_ID")
-	}
-	if secret == "" {
-		secret = os.Getenv("PRINTING_PRESS_OAUTH2_CLIENT_SECRET")
-	}
-	return id, secret
-}
-
-func (c *Client) mintClientCredentials(ctx context.Context, clientID, clientSecret string) error {
-	tokenURL := ""
-	if c.Config != nil {
-		tokenURL = c.Config.TokenURL
-	}
-	if tokenURL == "" {
-		tokenURL = "https://api.cc.example/oauth/token"
-	}
-	if tokenURL == "" {
-		return nil
-	}
-	form := url.Values{
-		"grant_type":    {"client_credentials"},
-		"client_id":     {clientID},
-		"client_secret": {clientSecret},
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(form.Encode()))
-	if err != nil {
-		return fmt.Errorf("building token request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := c.HTTPClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("calling token endpoint: %w", err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("OAuth client_credentials mint: HTTP %d: %s", resp.StatusCode, cliutil.SanitizeErrorBody(string(body)))
-	}
-	var tokenResp struct {
-		AccessToken string `json:"access_token"`
-		ExpiresIn   int    `json:"expires_in"`
-	}
-	if err := json.Unmarshal(body, &tokenResp); err != nil {
-		return fmt.Errorf("parsing token response: %w", err)
-	}
-	if tokenResp.AccessToken == "" {
-		return fmt.Errorf("OAuth client_credentials mint: response missing access_token")
-	}
-	// Guard against non-conformant servers that return expires_in: 0.
-	// A zero-duration expiry resolves to time.Now(), which authHeader()
-	// then treats as expired, causing every request to re-mint in a loop.
-	expiry := time.Time{}
-	if tokenResp.ExpiresIn > 0 {
-		expiry = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
-	}
-	c.Config.AuthHeaderVal = "" // force AuthHeader() to use the new AccessToken path
-	if err := c.Config.SaveTokens(clientID, clientSecret, tokenResp.AccessToken, "", expiry); err != nil {
-		return fmt.Errorf("saving minted token: %w", err)
-	}
-	return nil
-}
-
-func (c *Client) refreshAccessToken(ctx context.Context) error {
-	if c.Config == nil {
-		return nil
-	}
-	if c.Config.RefreshToken == "" {
-		return nil
-	}
-
-	tokenURL := c.Config.TokenURL
-	if tokenURL == "" {
-		tokenURL = "https://api.cc.example/oauth/token"
-	}
-
-	params := url.Values{
-		"grant_type":    {"refresh_token"},
-		"refresh_token": {c.Config.RefreshToken},
-		"client_id":     {c.Config.ClientID},
-	}
-	if c.Config.ClientSecret != "" {
-		params.Set("client_secret", c.Config.ClientSecret)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(params.Encode()))
-	if err != nil {
-		return fmt.Errorf("building refresh request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := c.HTTPClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("refreshing access token: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("refreshing access token: HTTP %d: %s", resp.StatusCode, truncateBody(body))
-	}
-
-	var tokenResp struct {
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
-		ExpiresIn    int    `json:"expires_in"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
-		return fmt.Errorf("parsing refresh response: %w", err)
-	}
-	if tokenResp.AccessToken == "" {
-		return fmt.Errorf("refreshing access token: no access token in response")
-	}
-
-	refreshToken := c.Config.RefreshToken
-	if tokenResp.RefreshToken != "" {
-		refreshToken = tokenResp.RefreshToken
-	}
-
-	expiry := time.Time{}
-	if tokenResp.ExpiresIn > 0 {
-		expiry = time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
-	}
-
-	if err := c.Config.SaveTokens(c.Config.ClientID, c.Config.ClientSecret, tokenResp.AccessToken, refreshToken, expiry); err != nil {
-		return fmt.Errorf("saving refreshed token: %w", err)
-	}
-
-	return nil
 }
 
 // binaryResponseEnvelope wraps a non-textual success body so it survives the
@@ -1065,7 +889,7 @@ func (c *Client) maskCredentialText(text string, extraCredentials ...string) str
 		addCredential(c.Config.AccessToken)
 		addCredential(c.Config.RefreshToken)
 		addCredential(c.Config.ClientSecret)
-		addCredential(c.Config.PrintingPressOauth2ClientSecret)
+		addCredential(c.Config.CookieAuthSession)
 	}
 	sort.SliceStable(masks, func(i, j int) bool {
 		return len(masks[i].needle) > len(masks[j].needle)

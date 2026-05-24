@@ -840,17 +840,15 @@ type AuthConfig struct {
 	// declare both schemes in components.securitySchemes; selectSecurityScheme
 	// picks one as the primary (Authorization-bearer half) and the parser then
 	// scans the rest for apiKey schemes carrying x-auth-vars[*].kind: per_call,
-	// so the apiKey header gets sent alongside the primary auth. Generator
-	// emits a Config field + os.Getenv loader per entry, plus a req.Header.Set
-	// after the primary auth header on every request.
+	// so the apiKey credential gets sent alongside the primary auth. Generator
+	// emits a Config field + os.Getenv loader per entry, then applies the
+	// credential according to In on every request.
 	AdditionalHeaders []AdditionalAuthHeader `yaml:"additional_headers,omitempty" json:"additional_headers,omitempty"`
 }
 
-// AdditionalAuthHeader pairs a sibling-scheme header destination with the
-// per-call env var that supplies its value. Only In == "header" is emitted by
-// the generator today; the field is serialized so parsed specs round-trip
-// cleanly and validators can distinguish placements without relying on the
-// destination string.
+// AdditionalAuthHeader pairs a sibling-scheme credential destination with the
+// per-call env var that supplies its value. Header stores the OpenAPI apiKey
+// scheme's name field; In distinguishes header and query placements.
 type AdditionalAuthHeader struct {
 	Header string     `yaml:"header" json:"header"`
 	In     string     `yaml:"in,omitempty" json:"in,omitempty"`
@@ -1161,6 +1159,17 @@ func (c AuthConfig) EffectiveOAuth2Grant() string {
 // sessions do not need refresh metadata.
 func (c AuthConfig) HasCompanionHints() bool {
 	return strings.TrimSpace(c.LoginURL) != ""
+}
+
+// HasCookies reports whether the spec declares a non-empty cookie list,
+// which is the signal the generator uses to wire a persistent
+// net/http.CookieJar into the client and to persist Chrome-extracted
+// cookies after login. Gates on the cookie list rather than Auth.Type
+// because the two cookie-bearing types (cookie, composed) both declare
+// auth.cookies when they need jar plumbing, and a composed-auth spec
+// without auth.cookies has nothing to persist.
+func (c AuthConfig) HasCookies() bool {
+	return len(c.Cookies) > 0
 }
 
 // validateAuthCompanion enforces the small set of guardrails on the
@@ -1677,7 +1686,8 @@ func (h *HTMLExtract) EffectiveScriptSelector() string {
 type Param struct {
 	Name        string   `yaml:"name" json:"name"`
 	FlagName    string   `yaml:"flag_name,omitempty" json:"flag_name,omitempty"`
-	URLName     string   `yaml:"url_name,omitempty" json:"url_name,omitempty"` // optional override for URL query-key emission (e.g., "$limit" for Socrata while keeping --limit flag)
+	URLName     string   `yaml:"url_name,omitempty" json:"url_name,omitempty"`   // optional override for URL query-key emission (e.g., "$limit" for Socrata while keeping --limit flag)
+	BodyName    string   `yaml:"body_name,omitempty" json:"body_name,omitempty"` // optional override for request-body field emission while keeping the public name
 	Aliases     []string `yaml:"aliases,omitempty" json:"aliases,omitempty"`
 	Type        string   `yaml:"type" json:"type"`
 	Required    bool     `yaml:"required" json:"required"`
@@ -1696,7 +1706,8 @@ type Param struct {
 	FieldSelectorDefault string `yaml:"field_selector_default,omitempty" json:"field_selector_default,omitempty"`
 	// IdentName, when set, overrides Name for Go identifier and CLI flag
 	// derivation (camel/flagName). Name remains the wire-side parameter name
-	// used in URLs, JSON keys, and path substitution. Populated by the
+	// used in URLs unless url_name is set, request-body keys unless body_name
+	// is set, and path substitution. Populated by the
 	// generator's flag-collision dedup pass when two params on the same
 	// endpoint would otherwise produce identical Go identifiers or CLI flag
 	// names — for example Twilio's StartTime/StartTime>/StartTime< all
@@ -1717,6 +1728,16 @@ type Param struct {
 func (p Param) WireName() string {
 	if p.URLName != "" {
 		return p.URLName
+	}
+	return p.Name
+}
+
+// BodyWireName returns the request-body key for this param when emitted in a
+// generated HTTP request body. BodyName takes precedence when set; otherwise
+// Name is used.
+func (p Param) BodyWireName() string {
+	if p.BodyName != "" {
+		return p.BodyName
 	}
 	return p.Name
 }
@@ -2630,6 +2651,11 @@ func validateAdditionalAuthHeaders(context string, auth AuthConfig) error {
 			return fmt.Errorf("%s.additional_headers contains duplicate header %q", context, header)
 		}
 		seenHeaders[header] = struct{}{}
+		switch strings.ToLower(strings.TrimSpace(ah.In)) {
+		case "", "header", "query":
+		default:
+			return fmt.Errorf("%s.additional_headers[%d].in must be \"header\" or \"query\" (got %q)", context, i, ah.In)
+		}
 		name := strings.TrimSpace(ah.EnvVar.Name)
 		if name == "" {
 			return fmt.Errorf("%s.additional_headers[%d].env_var.name is required", context, i)

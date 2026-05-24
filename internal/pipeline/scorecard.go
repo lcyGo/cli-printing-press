@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -1290,6 +1293,65 @@ func countClientAPICalls(content string) int {
 	return len(clientAPICallRE.FindAllString(content, -1))
 }
 
+func clientHelperCallCounts(fileContent map[string]string) map[string]int {
+	helpers := map[string]int{}
+	for fileName, content := range fileContent {
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, "", content, 0)
+		if err != nil {
+			continue
+		}
+		imports := clientImportAliases(file)
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Name == nil || fn.Recv != nil || fn.Body == nil {
+				continue
+			}
+			start := fset.Position(fn.Body.Pos()).Offset
+			end := fset.Position(fn.Body.End()).Offset
+			if start < 0 || end > len(content) || start >= end {
+				continue
+			}
+			body := content[start:end]
+			calls := countClientAPICalls(body) + countImportedClientCalls(fn.Body, imports, false)
+			if calls > 0 {
+				helpers[helperKey(fileName, fn.Name.Name)] = calls
+			}
+		}
+	}
+	return helpers
+}
+
+func helperKey(fileName, funcName string) string {
+	return fileName + ":" + funcName
+}
+
+func splitHelperKey(key string) (string, string) {
+	i := strings.LastIndexByte(key, ':')
+	if i < 0 {
+		return "", key
+	}
+	return key[:i], key[i+1:]
+}
+
+func countImportedClientCalls(body *ast.BlockStmt, imports map[string]clientImportKind, allowAnySiblingSelector bool) int {
+	if body == nil {
+		return 0
+	}
+	count := 0
+	ast.Inspect(body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if isImportedClientCall(call.Fun, imports, allowAnySiblingSelector) {
+			count++
+		}
+		return true
+	})
+	return count
+}
+
 // cobraUseLeafRe extracts the leaf command name from a Cobra Use: literal.
 // Accepts both Go string forms — double-quoted and backtick raw-string —
 // because authors reach for backticks when the value contains a literal
@@ -1427,6 +1489,7 @@ func scoreWorkflows(dir string) int {
 		fileContent[e.Name()] = readFileContent(filepath.Join(cliDir, e.Name()))
 	}
 	storeHelpers := storeHelperNames(fileContent)
+	clientHelpers := clientHelperCallCounts(fileContent)
 
 	// Some prefixes overlap with insightPrefixes intentionally — per Steinberger,
 	// analytics/insights ARE compound commands (the visionary research plan lists
@@ -1479,7 +1542,9 @@ func scoreWorkflows(dir string) int {
 
 		// Count files that make 2+ API calls (total occurrences, not unique methods).
 		// A command calling c.Get 3 times is a compound workflow even if it never uses POST.
-		apiCalls := countClientAPICalls(content)
+		apiCalls := countClientAPICalls(content) + countWeightedHelperCallsFiltered(content, clientHelpers, func(fileName, name string) bool {
+			return fileName != e.Name()
+		})
 		if strings.Contains(content, "store.") {
 			apiCalls++
 		}
@@ -1675,6 +1740,7 @@ type openAPISecurityScheme struct {
 	Scheme     string
 	In         string
 	HeaderName string
+	EnvVars    []string
 	// Prefix mirrors apispec.AuthConfig.Prefix for internal-YAML specs that
 	// override the literal "Bearer" scheme word (e.g., "Token", "PRIVATE-TOKEN").
 	// Empty for OpenAPI-derived schemes; bearer-branch scoring falls back to "Bearer".
@@ -1781,6 +1847,7 @@ func loadOpenAPISpecData(data []byte, specPath string) (*openAPISpecInfo, error)
 					scheme.Scheme = strings.ToLower(asString(fields["scheme"]))
 					scheme.In = strings.ToLower(asString(fields["in"]))
 					scheme.HeaderName = asString(fields["name"])
+					scheme.EnvVars = parseScorecardAuthEnvVars(fields["x-auth-env-vars"])
 				}
 				info.SecuritySchemes[schemeName] = scheme
 			}
@@ -1805,6 +1872,7 @@ func loadOpenAPISpecData(data []byte, specPath string) (*openAPISpecInfo, error)
 						scheme.Type = "apikey"
 						scheme.In = swIn
 						scheme.HeaderName = swName
+						scheme.EnvVars = parseScorecardAuthEnvVars(fields["x-auth-env-vars"])
 						// Detect Bearer-style API key in header with Authorization name.
 						if swIn == "header" && strings.EqualFold(swName, "Authorization") {
 							scheme.Type = "http"
@@ -2122,6 +2190,37 @@ func parseOAuthScopeList(value any) []string {
 	return slices.Compact(scopes)
 }
 
+func parseScorecardAuthEnvVars(value any) []string {
+	switch envVars := value.(type) {
+	case []any:
+		var parsed []string
+		for _, raw := range envVars {
+			envVar := strings.TrimSpace(asString(raw))
+			if envVar != "" {
+				parsed = append(parsed, envVar)
+			}
+		}
+		return parsed
+	case []string:
+		var parsed []string
+		for _, raw := range envVars {
+			envVar := strings.TrimSpace(raw)
+			if envVar != "" {
+				parsed = append(parsed, envVar)
+			}
+		}
+		return parsed
+	case string:
+		envVar := strings.TrimSpace(envVars)
+		if envVar == "" {
+			return nil
+		}
+		return []string{envVar}
+	default:
+		return nil
+	}
+}
+
 func isOAuthSecurityScheme(scheme openAPISecurityScheme) bool {
 	return scheme.Type == "oauth2" || scheme.Type == "openidconnect"
 }
@@ -2188,8 +2287,9 @@ func scoreAuthScheme(clientContent, configContent, authContent string, hasStruct
 	envMatched := false
 	scoreable := false
 	bearerStyle := false
+	exactQueryParamMatched := false
 
-	if strings.EqualFold(scheme.Type, "apikey") && scheme.In == "header" && strings.TrimSpace(scheme.HeaderName) != "" {
+	if strings.EqualFold(scheme.Type, "apikey") && (scheme.In == "header" || scheme.In == "query") && strings.TrimSpace(scheme.HeaderName) != "" {
 		headerName = scheme.HeaderName
 	} else if strings.EqualFold(scheme.Type, "apikey") && scheme.In == "cookie" {
 		headerName = "Cookie"
@@ -2226,6 +2326,14 @@ func scoreAuthScheme(clientContent, configContent, authContent string, hasStruct
 				authHeaderMatched = true
 			}
 		}
+		if scheme.In == "query" && headerName != "" {
+			if queryAssignmentPresent(clientContent, headerName) {
+				exactQueryParamMatched = true
+				authHeaderMatched = true
+				headerNameMatched = true
+				queryMatched = true
+			}
+		}
 	case strings.EqualFold(scheme.Type, "oauth2"), strings.EqualFold(scheme.Type, "openidconnect"):
 		scoreable = true
 		bearerStyle = true
@@ -2255,7 +2363,7 @@ func scoreAuthScheme(clientContent, configContent, authContent string, hasStruct
 	}
 
 	// AuthProtocol pattern: query schemes touch URL query plumbing.
-	if scheme.In == "query" && (strings.Contains(clientContent, ".Query()") || strings.Contains(clientContent, "url.Values") || strings.Contains(clientContent, "RawQuery")) {
+	if scheme.In == "query" && (queryAssignmentPresent(clientContent, headerName) || strings.Contains(clientContent, ".Query()") || strings.Contains(clientContent, "url.Values") || strings.Contains(clientContent, "RawQuery")) {
 		queryMatched = true
 	}
 
@@ -2267,6 +2375,9 @@ func scoreAuthScheme(clientContent, configContent, authContent string, hasStruct
 	if !envMatched && configReadsAPIKeyEnvForScheme(configContent, scheme) {
 		envMatched = true
 	}
+	if !envMatched && configReadsSchemeEnvVar(configContent, scheme) {
+		envMatched = true
+	}
 	// Browser cookie auth (composed or cookie type) uses Chrome cookie extraction
 	// instead of env vars. Credit envMatched if the auth code has cookie tooling.
 	if !envMatched && (strings.Contains(authContent, "detectCookieTool") ||
@@ -2274,6 +2385,10 @@ func scoreAuthScheme(clientContent, configContent, authContent string, hasStruct
 		strings.Contains(configContent, "chrome-composed") ||
 		strings.Contains(configContent, `"browser"`)) {
 		envMatched = true
+	}
+
+	if strings.EqualFold(scheme.Type, "apikey") && scheme.In == "query" && strings.TrimSpace(headerName) != "" && !exactQueryParamMatched {
+		return 0, true
 	}
 
 	score := 0
@@ -2411,6 +2526,17 @@ func headerAssignmentPresent(clientContent, headerName string) bool {
 		strings.Contains(clientContent, `header.add("`+headerName+`"`)
 }
 
+func queryAssignmentPresent(clientContent, queryName string) bool {
+	clientContent = strings.ToLower(clientContent)
+	queryName = strings.ToLower(strings.TrimSpace(queryName))
+	if queryName == "" {
+		return false
+	}
+	return strings.Contains(clientContent, `q.set("`+queryName+`"`) ||
+		strings.Contains(clientContent, `query.set("`+queryName+`"`) ||
+		strings.Contains(clientContent, `params["`+queryName+`"]`)
+}
+
 func inferredAuthHeaderAssignmentPresent(clientContent string) bool {
 	for _, headerName := range []string{"Authorization", "X-Api-Key", "X-Auth-Token", "X-Access-Token", "Cookie"} {
 		if headerAssignmentPresent(clientContent, headerName) {
@@ -2445,6 +2571,21 @@ func configReadsAPIKeyEnvForScheme(configContent string, scheme openAPISecurityS
 		}
 	}
 	return false
+}
+
+func configReadsSchemeEnvVar(configContent string, scheme openAPISecurityScheme) bool {
+	for _, envVar := range scheme.EnvVars {
+		envVar = strings.TrimSpace(envVar)
+		if envVar != "" && configReadsExactEnvVar(configContent, envVar) {
+			return true
+		}
+	}
+	return false
+}
+
+func configReadsExactEnvVar(configContent, envVar string) bool {
+	callPattern := `\bos\.(?:Getenv|LookupEnv)\(\s*"` + regexp.QuoteMeta(envVar) + `"\s*\)`
+	return regexp.MustCompile(callPattern).MatchString(configContent)
 }
 
 func isGenericAPIKeyScheme(scheme openAPISecurityScheme) bool {

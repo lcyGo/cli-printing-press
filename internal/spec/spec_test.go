@@ -87,6 +87,14 @@ resources:
             aliases: [s]
             type: string
             description: Street address
+      search:
+        method: POST
+        path: /stores/search
+        body:
+          - name: startAfter
+            body_name: searchAfter
+            type: array
+            description: Pagination cursor
 `)
 	s, err := ParseBytes(yamlSpec)
 	require.NoError(t, err)
@@ -94,6 +102,9 @@ resources:
 	assert.Equal(t, "s", param.Name)
 	assert.Equal(t, "address", param.FlagName)
 	assert.Equal(t, []string{"s"}, param.Aliases)
+	bodyParam := s.Resources["stores"].Endpoints["search"].Body[0]
+	assert.Equal(t, "startAfter", bodyParam.Name)
+	assert.Equal(t, "searchAfter", bodyParam.BodyName)
 
 	jsonSpec := []byte(`{
   "name": "public-params-json",
@@ -186,6 +197,11 @@ func TestParamPublicInputName(t *testing.T) {
 	assert.Equal(t, "store_code", Param{Name: "store_code"}.PublicInputName())
 	assert.Equal(t, "id-2", Param{Name: "id", IdentName: "id_2"}.PublicInputName())
 	assert.Equal(t, "start-time-2", Param{Name: "StartTime>", IdentName: "StartTime>_2"}.PublicInputName())
+}
+
+func TestParamBodyWireName(t *testing.T) {
+	assert.Equal(t, "startAfter", Param{Name: "startAfter"}.BodyWireName())
+	assert.Equal(t, "searchAfter", Param{Name: "startAfter", BodyName: "searchAfter"}.BodyWireName())
 }
 
 func TestValidatePublicParamNames(t *testing.T) {
@@ -345,6 +361,17 @@ func TestValidateAdditionalAuthHeadersErrors(t *testing.T) {
 			},
 		},
 		{
+			name: "happy path: per_call sibling with query validates",
+			auth: AuthConfig{
+				Type:   "api_key",
+				Header: "key",
+				In:     "query",
+				AdditionalHeaders: []AdditionalAuthHeader{
+					{Header: "token", In: "query", EnvVar: perCall("TRELLO_TOKEN")},
+				},
+			},
+		},
+		{
 			name: "missing header",
 			auth: AuthConfig{
 				Type: "bearer_token",
@@ -374,6 +401,16 @@ func TestValidateAdditionalAuthHeadersErrors(t *testing.T) {
 				},
 			},
 			wantErr: `auth.additional_headers contains duplicate header "X-Same"`,
+		},
+		{
+			name: "unsupported placement",
+			auth: AuthConfig{
+				Type: "bearer_token",
+				AdditionalHeaders: []AdditionalAuthHeader{
+					{Header: "X-Key", In: "cookie", EnvVar: perCall("COOKIE_KEY")},
+				},
+			},
+			wantErr: `auth.additional_headers[0].in must be "header" or "query" (got "cookie")`,
 		},
 		{
 			name: "duplicate env_var name",
@@ -4572,6 +4609,30 @@ func TestAuthHasCompanionHints(t *testing.T) {
 		})
 	}
 }
+
+// TestAuthHasCookies pins the predicate that drives cookie-jar wiring in
+// client.go.tmpl and the WriteCookieJarFromMap call in auth_browser.go.tmpl.
+// It must gate on the cookie list, not Auth.Type, because composed-auth
+// specs without auth.cookies have nothing to persist.
+func TestAuthHasCookies(t *testing.T) {
+	tests := []struct {
+		name string
+		auth AuthConfig
+		want bool
+	}{
+		{name: "cookie-typed with cookie list", auth: AuthConfig{Type: "cookie", Cookies: []string{"session_id"}}, want: true},
+		{name: "composed-typed with cookie list", auth: AuthConfig{Type: "composed", Cookies: []string{"session_id", "csrf"}}, want: true},
+		{name: "composed-typed without cookie list", auth: AuthConfig{Type: "composed"}, want: false},
+		{name: "bearer with no cookies", auth: AuthConfig{Type: "bearer_token"}, want: false},
+		{name: "empty", auth: AuthConfig{}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.auth.HasCookies())
+		})
+	}
+}
+
 func TestPromoteParamsToBodyForWriteEndpoints(t *testing.T) {
 	t.Parallel()
 

@@ -411,6 +411,36 @@ func TestMapParametersOnlyMarksQueryFieldSelectors(t *testing.T) {
 	assert.Equal(t, spec.ParamPurposeFieldSelector, byName["opt_fields"].Purpose)
 }
 
+// TestMapParametersDropsPhantomBracketName verifies that phantom parameter
+// names are dropped (issue #1670). A spec parameter literally named "[]" (or
+// empty) is not a usable MCP/CLI argument and would emit "?[]=value" on the
+// wire, so it must be dropped before reaching CLI flags, MCP tool schemas, and
+// tools-manifest.json. Legitimate array-style names like "tags[]" must be
+// preserved.
+func TestMapParametersDropsPhantomBracketName(t *testing.T) {
+	t.Parallel()
+
+	pathItem := &openapi3.PathItem{}
+	op := &openapi3.Operation{
+		Parameters: openapi3.Parameters{
+			{Value: &openapi3.Parameter{Name: "[]", In: openapi3.ParameterInQuery, Schema: openapi3.NewStringSchema().NewRef()}},
+			{Value: &openapi3.Parameter{Name: "  ", In: openapi3.ParameterInQuery, Schema: openapi3.NewStringSchema().NewRef()}},
+			{Value: &openapi3.Parameter{Name: "tags[]", In: openapi3.ParameterInQuery, Schema: openapi3.NewStringSchema().NewRef()}},
+			{Value: &openapi3.Parameter{Name: "limit", In: openapi3.ParameterInQuery, Schema: openapi3.NewInt64Schema().NewRef()}},
+		},
+	}
+
+	byName := make(map[string]bool)
+	for _, p := range mapParameters(pathItem, op) {
+		byName[p.Name] = true
+	}
+
+	assert.False(t, byName["[]"], "phantom []-named param must be dropped")
+	assert.False(t, byName["  "], "whitespace-only param name must be dropped")
+	assert.True(t, byName["tags[]"], "legitimate array-style param must be kept")
+	assert.True(t, byName["limit"], "normal param must be kept")
+}
+
 func readAICLargeSpec(tb testing.TB) []byte {
 	tb.Helper()
 	data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "openapi", "artic-openapi.json"))
@@ -4400,38 +4430,37 @@ paths:
 	assert.Empty(t, parsed.Auth.AdditionalHeaders)
 }
 
-// Sibling apiKey-in-query schemes are skipped: the issue this addresses is
-// header-only (ST-App-Key, Stripe-Signature, Atlassian-Token). A query-param
-// sibling would imply mixing query-auth with bearer Authorization, which is
-// not a shape this fix supports, and pretending it works would silently emit
-// broken code.
-func TestSiblingApiKeyInQueryIsSkipped(t *testing.T) {
+// Sibling apiKey-in-query schemes are required credentials just like
+// sibling header schemes. Trello-shaped specs declare two query apiKeys in one
+// AND group; dropping the second one makes every live call unauthenticated.
+func TestSiblingApiKeyInQueryIsCollected(t *testing.T) {
 	t.Parallel()
 
 	yamlSpec := []byte(`openapi: "3.0.3"
 info:
-  title: query-sibling
+  title: trello-shaped
   version: "1.0.0"
 servers:
-  - url: https://api.example.com
+  - url: https://api.trello.com/1
 security:
-  - bearer: []
-    queryKey: []
+  - APIKey: []
+    APIToken: []
 components:
   securitySchemes:
-    bearer:
-      type: http
-      scheme: bearer
-    queryKey:
+    APIKey:
       type: apiKey
       in: query
-      name: api_key
-      x-auth-vars:
-        - name: EXAMPLE_QUERY_KEY
-          kind: per_call
-          required: true
+      name: key
+      x-auth-env-vars:
+        - TRELLO_API_KEY
+    APIToken:
+      type: apiKey
+      in: query
+      name: token
+      x-auth-env-vars:
+        - TRELLO_TOKEN
 paths:
-  /items:
+  /members/me:
     get:
       responses:
         "200":
@@ -4439,7 +4468,20 @@ paths:
 `)
 	parsed, err := Parse(yamlSpec)
 	require.NoError(t, err)
-	assert.Empty(t, parsed.Auth.AdditionalHeaders)
+	assert.Equal(t, "api_key", parsed.Auth.Type)
+	assert.Equal(t, "APIKey", parsed.Auth.Scheme)
+	assert.Equal(t, "query", parsed.Auth.In)
+	assert.Equal(t, "key", parsed.Auth.Header)
+	assert.Equal(t, []string{"TRELLO_API_KEY"}, parsed.Auth.EnvVars)
+	require.Len(t, parsed.Auth.AdditionalHeaders, 1, "AND-sibling query apiKey scheme must surface as an additional credential")
+	additional := parsed.Auth.AdditionalHeaders[0]
+	assert.Equal(t, "token", additional.Header)
+	assert.Equal(t, "query", additional.In)
+	assert.Equal(t, "APIToken", additional.Scheme)
+	assert.Equal(t, "TRELLO_TOKEN", additional.EnvVar.Name)
+	assert.Equal(t, spec.AuthEnvVarKindPerCall, additional.EnvVar.Kind)
+	assert.True(t, additional.EnvVar.Required)
+	assert.True(t, additional.EnvVar.Sensitive)
 }
 
 func TestOperationLevelHeterogeneousSiblingApiKeysAreSkipped(t *testing.T) {
@@ -7267,6 +7309,105 @@ paths:
 	assert.True(t, byName["grant_type"].Required)
 	assert.True(t, byName["client_id"].Required)
 	assert.False(t, byName["client_secret"].Required)
+}
+
+func TestParseQueryParamURLNameOverrides(t *testing.T) {
+	t.Parallel()
+	data := []byte(`
+openapi: 3.0.3
+info:
+  title: Param Override API
+  version: 1.0.0
+servers:
+  - url: https://api.example.com
+paths:
+  /opportunities/search:
+    get:
+      operationId: searchOpportunities
+      x-param-url-names:
+        " locationId ": location_id
+      parameters:
+        - $ref: "#/components/parameters/LocationId"
+        - name: pipeline_id
+          in: query
+          schema:
+            type: string
+        - name: contactId
+          in: query
+          x-url-name: contact_id
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ok
+  /opportunities/pipelines:
+    get:
+      operationId: listPipelines
+      parameters:
+        - $ref: "#/components/parameters/LocationId"
+      responses:
+        "200":
+          description: ok
+  /shared:
+    x-param-url-names:
+      accountId: account_id
+    get:
+      operationId: getShared
+      parameters:
+        - name: accountId
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ok
+    delete:
+      operationId: deleteShared
+      x-param-url-names:
+        accountId: acct_id
+      parameters:
+        - name: accountId
+          in: query
+          schema:
+            type: string
+      responses:
+        "204":
+          description: deleted
+components:
+  parameters:
+    LocationId:
+      name: locationId
+      in: query
+      required: true
+      schema:
+        type: string
+`)
+
+	parsed, err := Parse(data)
+	require.NoError(t, err)
+
+	search := findParsedEndpointByPath(t, parsed, "GET", "/opportunities/search")
+	require.Len(t, search.Params, 3)
+	assert.Equal(t, "locationId", search.Params[0].Name)
+	assert.Equal(t, "location_id", search.Params[0].URLName)
+	assert.Equal(t, "locationId", search.Params[0].PublicInputName())
+	assert.Equal(t, "location_id", search.Params[0].WireName())
+	assert.Equal(t, "contactId", search.Params[2].Name)
+	assert.Equal(t, "contact_id", search.Params[2].URLName)
+
+	pipelines := findParsedEndpointByPath(t, parsed, "GET", "/opportunities/pipelines")
+	require.Len(t, pipelines.Params, 1)
+	assert.Equal(t, "locationId", pipelines.Params[0].Name)
+	assert.Empty(t, pipelines.Params[0].URLName)
+	assert.Equal(t, "locationId", pipelines.Params[0].WireName())
+
+	sharedGet := findParsedEndpointByPath(t, parsed, "GET", "/shared")
+	require.Len(t, sharedGet.Params, 1)
+	assert.Equal(t, "account_id", sharedGet.Params[0].URLName)
+
+	sharedDelete := findParsedEndpointByPath(t, parsed, "DELETE", "/shared")
+	require.Len(t, sharedDelete.Params, 1)
+	assert.Equal(t, "acct_id", sharedDelete.Params[0].URLName)
 }
 
 // TestParseJSONPreferredOverFormUrlencoded asserts the parser still picks

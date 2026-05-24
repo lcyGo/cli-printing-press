@@ -48,6 +48,8 @@ const (
 	extensionLegacyMCP             = "mcp"
 	extensionCache                 = "x-cache"
 	extensionSyncWalker            = "x-pp-sync-walker"
+	extensionParamURLName          = "x-url-name"
+	extensionParamURLNames         = "x-param-url-names"
 	extensionAPIName               = "x-api-name"
 	extensionDisplayName           = "x-display-name"
 	extensionWebsite               = "x-website"
@@ -982,12 +984,12 @@ func mapAuthWithDescriptionInference(doc *openapi3.T, name string, allowDescript
 // header on every Bearer-authenticated request. Only schemes co-located with
 // the winner in a requirement object are promoted.
 //
-// Only apiKey-typed siblings with `in: header` are considered. Rich
+// Only apiKey-typed siblings with `in: header` or `in: query` are considered. Rich
 // x-auth-vars per_call declarations win; legacy x-auth-env-vars supplies the
 // same credential name for specs that do not use the rich shape. For all-apiKey
 // AND groups, missing extension metadata falls back to a deterministic
-// scheme-derived env var so every required header reaches generated config and
-// client code.
+// scheme-derived env var so every required credential reaches generated config
+// and client code.
 func collectAdditionalAuthHeaders(doc *openapi3.T, winner, envPrefix string) []spec.AdditionalAuthHeader {
 	if doc == nil || doc.Components == nil || len(doc.Components.SecuritySchemes) <= 1 {
 		return nil
@@ -1008,17 +1010,17 @@ func collectAdditionalAuthHeaders(doc *openapi3.T, winner, envPrefix string) []s
 		if _, ok := req[winner]; !ok {
 			continue
 		}
-		allHeaderAPIKeys := requirementAllHeaderAPIKeys(doc, req)
+		allSupportedAPIKeys := requirementAllSupportedAPIKeys(doc, req)
 		for name := range req {
 			if name == winner {
 				continue
 			}
 			if _, dup := siblingSet[name]; dup {
-				fallbackEligible[name] = fallbackEligible[name] || allHeaderAPIKeys
+				fallbackEligible[name] = fallbackEligible[name] || allSupportedAPIKeys
 				continue
 			}
 			siblingSet[name] = struct{}{}
-			fallbackEligible[name] = allHeaderAPIKeys
+			fallbackEligible[name] = allSupportedAPIKeys
 			siblings = append(siblings, name)
 		}
 	}
@@ -1038,8 +1040,9 @@ func collectAdditionalAuthHeaders(doc *openapi3.T, winner, envPrefix string) []s
 			continue
 		}
 		// apiKey schemes must declare `in` per OpenAPI 3.x; an empty value is a
-		// spec authoring mistake and would otherwise silently emit a header.
-		if !strings.EqualFold(strings.TrimSpace(scheme.In), "header") {
+		// spec authoring mistake and would otherwise silently emit a credential.
+		placement := strings.ToLower(strings.TrimSpace(scheme.In))
+		if placement != "header" && placement != "query" {
 			continue
 		}
 		envVars := additionalHeaderEnvVars(scheme, name, envPrefix, fallbackEligible[name])
@@ -1052,7 +1055,7 @@ func collectAdditionalAuthHeaders(doc *openapi3.T, winner, envPrefix string) []s
 			}
 			headers = append(headers, spec.AdditionalAuthHeader{
 				Header: header,
-				In:     "header",
+				In:     placement,
 				Scheme: name,
 				EnvVar: ev,
 			})
@@ -1230,7 +1233,7 @@ func defaultAuthEnvVars(authType, format, schemeName, envPrefix string) []string
 	}
 }
 
-func requirementAllHeaderAPIKeys(doc *openapi3.T, req openapi3.SecurityRequirement) bool {
+func requirementAllSupportedAPIKeys(doc *openapi3.T, req openapi3.SecurityRequirement) bool {
 	if doc == nil || doc.Components == nil || len(req) == 0 {
 		return false
 	}
@@ -1239,7 +1242,8 @@ func requirementAllHeaderAPIKeys(doc *openapi3.T, req openapi3.SecurityRequireme
 		if scheme == nil {
 			return false
 		}
-		if !strings.EqualFold(scheme.Type, "apiKey") || !strings.EqualFold(strings.TrimSpace(scheme.In), "header") {
+		placement := strings.ToLower(strings.TrimSpace(scheme.In))
+		if !strings.EqualFold(scheme.Type, "apiKey") || (placement != "header" && placement != "query") {
 			return false
 		}
 	}
@@ -3516,6 +3520,8 @@ func hasPathParams(path string) bool {
 
 func mapParameters(pathItem *openapi3.PathItem, op *openapi3.Operation) []spec.Param {
 	merged := mergeParameters(pathItem, op)
+	var urlNameOverrides map[string]string
+	urlNameOverridesRead := false
 	params := make([]spec.Param, 0, len(merged))
 	for _, parameter := range merged {
 		if parameter == nil {
@@ -3531,6 +3537,12 @@ func mapParameters(pathItem *openapi3.PathItem, op *openapi3.Operation) []spec.P
 		if strings.HasPrefix(paramName, "$") || strings.HasPrefix(paramName, ".") {
 			continue
 		}
+		// Skip phantom names ("" / "[]") that some specs emit for unnamed
+		// array query params. They are not usable MCP/CLI arguments and would
+		// send "?[]=value" on the wire. Legitimate "foo[]" names are kept.
+		if trimmed := strings.TrimSpace(paramName); trimmed == "" || trimmed == "[]" {
+			continue
+		}
 		description := strings.TrimSpace(parameter.Description)
 		if description == "" {
 			description = humanizeFieldName(paramName)
@@ -3543,6 +3555,13 @@ func mapParameters(pathItem *openapi3.PathItem, op *openapi3.Operation) []spec.P
 			Description: description,
 			Enum:        schemaEnum(schema),
 			Format:      schemaFormat(schema),
+		}
+		if parameter.In == openapi3.ParameterInQuery {
+			if !urlNameOverridesRead {
+				urlNameOverrides = readParamURLNameOverrides(pathItem, op)
+				urlNameOverridesRead = true
+			}
+			param.URLName = paramURLName(paramName, parameter.Extensions, urlNameOverrides)
 		}
 		if parameter.In == openapi3.ParameterInQuery && isFieldSelectorParameter(paramName, description) {
 			param.Purpose = spec.ParamPurposeFieldSelector
@@ -3562,6 +3581,72 @@ func mapParameters(pathItem *openapi3.PathItem, op *openapi3.Operation) []spec.P
 	reclassifyPathParamModifiers(params)
 
 	return params
+}
+
+func readParamURLNameOverrides(pathItem *openapi3.PathItem, op *openapi3.Operation) map[string]string {
+	var out map[string]string
+	add := func(extensions map[string]any, context string) {
+		if len(extensions) == 0 {
+			return
+		}
+		raw, ok := extensions[extensionParamURLNames]
+		if !ok || raw == nil {
+			return
+		}
+		values, ok := raw.(map[string]any)
+		if !ok {
+			warnf("%s: %s must be an object mapping parameter names to URL names; ignoring", context, extensionParamURLNames)
+			return
+		}
+		for name, value := range values {
+			paramName := strings.TrimSpace(name)
+			urlName, ok := value.(string)
+			if !ok {
+				warnf("%s: %s.%s must be a string; ignoring", context, extensionParamURLNames, name)
+				continue
+			}
+			urlName = strings.TrimSpace(urlName)
+			if paramName == "" || urlName == "" {
+				warnf("%s: %s entries must have non-empty parameter and URL names; ignoring %q", context, extensionParamURLNames, name)
+				continue
+			}
+			if out == nil {
+				out = map[string]string{}
+			}
+			out[paramName] = urlName
+		}
+	}
+	if pathItem != nil {
+		add(pathItem.Extensions, "path")
+	}
+	if op != nil {
+		add(op.Extensions, "operation")
+	}
+	return out
+}
+
+func paramURLName(paramName string, extensions map[string]any, overrides map[string]string) string {
+	if urlName, ok := overrides[paramName]; ok {
+		return urlName
+	}
+	if len(extensions) == 0 {
+		return ""
+	}
+	raw, ok := extensions[extensionParamURLName]
+	if !ok || raw == nil {
+		return ""
+	}
+	urlName, ok := raw.(string)
+	if !ok {
+		warnf("parameter %q: %s must be a string; ignoring", paramName, extensionParamURLName)
+		return ""
+	}
+	urlName = strings.TrimSpace(urlName)
+	if urlName == "" {
+		warnf("parameter %q: %s must be non-empty; ignoring", paramName, extensionParamURLName)
+		return ""
+	}
+	return urlName
 }
 
 func isFieldSelectorParameter(name, description string) bool {
