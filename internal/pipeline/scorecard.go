@@ -41,12 +41,13 @@ var quotaDailySignalRE = regexp.MustCompile(`(?i)\b(daily|per[-_\s]+day)\b`)
 
 // Scorecard holds the auto-scored evaluation of a generated CLI against the Steinberger bar.
 type Scorecard struct {
-	APIName            string       `json:"api_name"`
-	Steinberger        SteinerScore `json:"steinberger"`
-	CompetitorScores   []CompScore  `json:"competitor_scores"`
-	OverallGrade       string       `json:"overall_grade"`
-	GapReport          []string     `json:"gap_report"`
-	UnscoredDimensions []string     `json:"unscored_dimensions,omitempty"`
+	APIName                     string                      `json:"api_name"`
+	Steinberger                 SteinerScore                `json:"steinberger"`
+	CompetitorScores            []CompScore                 `json:"competitor_scores"`
+	OverallGrade                string                      `json:"overall_grade"`
+	GapReport                   []string                    `json:"gap_report"`
+	UnscoredDimensions          []string                    `json:"unscored_dimensions,omitempty"`
+	NovelFeatureDepthMismatches []NovelFeatureDepthMismatch `json:"novel_feature_depth_mismatches,omitempty"`
 
 	verifyCalibrationFloor   int
 	browserSessionUnverified bool
@@ -64,8 +65,8 @@ type SteinerScore struct {
 	MCPQuality            int `json:"mcp_quality"`              // 0-10
 	MCPDescriptionQuality int `json:"mcp_description_quality"`  // 0-10; unscored when no tools-manifest.json. Penalizes thin per-tool descriptions (the same threshold as `cli-printing-press tools-audit` thin-mcp-description).
 	MCPTokenEff           int `json:"mcp_token_efficiency"`     // 0-10; unscored when no MCP surface
-	MCPRemoteTransport    int `json:"mcp_remote_transport"`     // 0-10; unscored when no MCP surface. Rewards remote-capable servers per Anthropic's 2026-04 MCP guidance.
-	MCPToolDesign         int `json:"mcp_tool_design"`          // 0-10; unscored when no MCP surface or endpoint count below toolDesignMinEndpoints. Rewards intent-grouped tools vs. endpoint mirrors.
+	MCPRemoteTransport    int `json:"mcp_remote_transport"`     // 0-10; unscored when no MCP surface or small endpoint mirrors. Rewards remote-capable MCP servers.
+	MCPToolDesign         int `json:"mcp_tool_design"`          // 0-10; unscored when no MCP surface or endpoint count below mcpEnrichmentMinEndpoints. Rewards intent-grouped tools vs. endpoint mirrors.
 	MCPSurfaceStrategy    int `json:"mcp_surface_strategy"`     // 0-10; unscored unless the endpoint surface exceeds surfaceStrategyLargeThreshold or code-orchestration is explicitly used. Penalizes endpoint-mirror at scale.
 	LocalCache            int `json:"local_cache"`              // 0-10
 	CacheFreshness        int `json:"cache_freshness"`          // 0-10; unscored when the CLI has no local store
@@ -266,6 +267,8 @@ func finalizeScorecard(sc *Scorecard, outputDir, pipelineDir string, verifyRepor
 
 	// Gap report for dimensions below 5
 	sc.GapReport = buildGapReport(sc.Steinberger, sc.UnscoredDimensions)
+	sc.NovelFeatureDepthMismatches = scorecardNovelFeatureDepthMismatches(outputDir, pipelineDir)
+	appendNovelFeatureDepthGaps(sc)
 
 	// MCP tool split from manifest (informational, does not affect score)
 	if manifest, err := loadCLIManifestForScorecard(outputDir); err == nil && manifest.MCPBinary != "" {
@@ -950,6 +953,36 @@ func ApplyLiveCheckToScorecard(sc *Scorecard, live *LiveCheckResult) {
 	applyScorecardCalibration(sc)
 	sc.OverallGrade = computeGrade(sc.Steinberger.Percentage)
 	sc.GapReport = buildGapReport(sc.Steinberger, sc.UnscoredDimensions)
+	appendNovelFeatureDepthGaps(sc)
+}
+
+func scorecardNovelFeatureDepthMismatches(outputDir, pipelineDir string) []NovelFeatureDepthMismatch {
+	if pipelineDir == "" {
+		return nil
+	}
+	research, err := LoadResearch(pipelineDir)
+	if err != nil || len(research.NovelFeatures) == 0 {
+		return nil
+	}
+	paths, leaves := collectRegisteredCommands(outputDir)
+	var mismatches []NovelFeatureDepthMismatch
+	for _, nf := range research.NovelFeatures {
+		if !matchNovelFeature(nf, paths, leaves) {
+			continue
+		}
+		if mismatch := novelFeatureDepthMismatch(nf, paths); mismatch != nil {
+			mismatches = append(mismatches, *mismatch)
+		}
+	}
+	return mismatches
+}
+
+func appendNovelFeatureDepthGaps(sc *Scorecard) {
+	for _, mismatch := range sc.NovelFeatureDepthMismatches {
+		sc.GapReport = append(sc.GapReport, fmt.Sprintf(
+			"novel feature command-depth mismatch: %s advertised as %s but registered as %s",
+			mismatch.Command, mismatch.Advertised, mismatch.Actual))
+	}
 }
 
 func applyScorecardCalibration(sc *Scorecard) {
@@ -1386,6 +1419,14 @@ func scoreWorkflows(dir string) int {
 	// also prevents dead-code removal from dropping the score: a file whose
 	// constructor isn't registered isn't counted in the first place.
 	registeredFiles := registeredCommandFiles(cliDir)
+	fileContent := map[string]string{}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
+			continue
+		}
+		fileContent[e.Name()] = readFileContent(filepath.Join(cliDir, e.Name()))
+	}
+	storeHelpers := storeHelperNames(fileContent)
 
 	// Some prefixes overlap with insightPrefixes intentionally — per Steinberger,
 	// analytics/insights ARE compound commands (the visionary research plan lists
@@ -1428,10 +1469,10 @@ func scoreWorkflows(dir string) int {
 			continue
 		}
 
-		content := readFileContent(filepath.Join(cliDir, e.Name()))
+		content := fileContent[e.Name()]
 
 		// A command that uses the local data layer is a workflow command.
-		if hasStoreSignal(content) {
+		if hasStoreSignal(content) || callsStoreHelper(content, storeHelpers) {
 			compoundCommands++
 			continue
 		}

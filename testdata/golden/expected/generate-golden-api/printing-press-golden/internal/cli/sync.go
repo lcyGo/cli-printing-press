@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/spf13/cobra"
+	"io"
 	"net/url"
 	"os"
 	"printing-press-golden-pp-cli/internal/client"
@@ -121,6 +122,8 @@ Resource scoping:
 				return fmt.Errorf("opening local database: %w", err)
 			}
 			defer db.Close()
+
+			syncEventWriter := cmd.OutOrStdout()
 			// Snapshot before defaults expand, so an empty user filter stays empty
 			// and dependents inherit "sync everything" instead of the default list.
 			parentFilter := append([]string(nil), resources...)
@@ -208,7 +211,7 @@ Resource scoping:
 				go func() {
 					defer wg.Done()
 					for resource := range work {
-						res := syncResource(cmd.Context(), c, db, resource, sinceTS, full, maxPages, effectiveLatestOnly, userParams)
+						res := syncResource(cmd.Context(), c, db, resource, sinceTS, full, maxPages, effectiveLatestOnly, userParams, syncEventWriter)
 						results <- res
 					}
 				}()
@@ -262,7 +265,7 @@ Resource scoping:
 				}
 			}
 			// Sync dependent (parent-child) resources sequentially after flat resources.
-			depResults := syncDependentResources(cmd.Context(), c, db, sinceTS, full, maxPages, effectiveLatestOnly, parentFilter, userParams)
+			depResults := syncDependentResources(cmd.Context(), c, db, sinceTS, full, maxPages, effectiveLatestOnly, parentFilter, userParams, syncEventWriter)
 			for _, res := range depResults {
 				if res.Err != nil {
 					if humanFriendly {
@@ -303,7 +306,7 @@ Resource scoping:
 						totalSynced, totalResources, elapsed.Seconds())
 				}
 			} else {
-				fmt.Fprintf(os.Stdout, `{"event":"sync_summary","total_records":%d,"resources":%d,"success":%d,"warned":%d,"errored":%d,"duration_ms":%d}`+"\n",
+				fmt.Fprintf(syncEventWriter, `{"event":"sync_summary","total_records":%d,"resources":%d,"success":%d,"warned":%d,"errored":%d,"duration_ms":%d}`+"\n",
 					totalSynced, totalResources, successCount, warnCount, errCount, elapsed.Milliseconds())
 			}
 
@@ -336,7 +339,7 @@ Resource scoping:
 			if errCount > 0 && !strict && criticalErrCount == 0 && successCount > 0 {
 				if !humanFriendly {
 					msg := fmt.Sprintf("%d resource(s) failed but exit code is 0 because the new default treats non-critical failures as warnings. Pass --strict to restore the old behavior, or annotate critical resources with x-critical: true. See CHANGELOG.", errCount)
-					fmt.Fprintf(os.Stdout, `{"event":"sync_warning","reason":"exit_policy_default_changed","errored":%d,"message":"%s"}`+"\n",
+					fmt.Fprintf(syncEventWriter, `{"event":"sync_warning","reason":"exit_policy_default_changed","errored":%d,"message":"%s"}`+"\n",
 						errCount, strings.ReplaceAll(msg, `"`, `\"`))
 				} else {
 					fmt.Fprintf(os.Stderr, "warning: %d resource(s) failed but exit code is 0 because the new default treats non-critical failures as warnings. Pass --strict to restore the old behavior, or annotate critical resources with x-critical: true.\n", errCount)
@@ -368,11 +371,14 @@ Resource scoping:
 func syncResource(ctx context.Context, c interface {
 	Get(context.Context, string, map[string]string) (json.RawMessage, error)
 	RateLimit() float64
-}, db *store.Store, resource, sinceTS string, full bool, maxPages int, latestOnly bool, userParams *syncUserParams) syncResult {
+}, db *store.Store, resource, sinceTS string, full bool, maxPages int, latestOnly bool, userParams *syncUserParams, syncEvents io.Writer) syncResult {
 	started := time.Now()
+	if syncEvents == nil {
+		syncEvents = io.Discard
+	}
 
 	if !humanFriendly {
-		fmt.Fprintf(os.Stdout, `{"event":"sync_start","resource":"%s"}`+"\n", resource)
+		fmt.Fprintf(syncEvents, `{"event":"sync_start","resource":"%s"}`+"\n", resource)
 	}
 
 	path, err := syncResourcePath(resource)
@@ -404,7 +410,7 @@ func syncResource(ctx context.Context, c interface {
 				Message:  fmt.Sprintf("path %s requires parent context (%s); resource skipped", path, strings.Join(missingKeys, ", ")),
 			}
 			payloadJSON, _ := json.Marshal(payload)
-			fmt.Fprintf(os.Stdout, "%s\n", payloadJSON)
+			fmt.Fprintf(syncEvents, "%s\n", payloadJSON)
 		} else {
 			fmt.Fprintf(os.Stderr, "  %s skipped (requires parent context: %s)\n",
 				resource, strings.Join(missingKeys, ", "))
@@ -438,7 +444,7 @@ func syncResource(ctx context.Context, c interface {
 		if humanFriendly {
 			fmt.Fprintf(os.Stderr, "  %s: incremental sync ignored (endpoint declares no temporal filter; falling back to full pagination)\n", resource)
 		} else {
-			fmt.Fprintf(os.Stdout, `{"event":"sync_warning","resource":"%s","reason":"resource_not_incremental","message":"endpoint does not declare a temporal filter parameter; incremental sync has no effect for this resource"}`+"\n", resource)
+			fmt.Fprintf(syncEvents, `{"event":"sync_warning","resource":"%s","reason":"resource_not_incremental","message":"endpoint does not declare a temporal filter parameter; incremental sync has no effect for this resource"}`+"\n", resource)
 		}
 		effectiveSince = ""
 	}
@@ -485,13 +491,13 @@ func syncResource(ctx context.Context, c interface {
 		if err != nil {
 			if w, ok := isSyncAccessWarning(err); ok {
 				if !humanFriendly {
-					fmt.Fprintf(os.Stdout, `{"event":"sync_warning","resource":"%s","status":%d,"reason":"%s","message":"%s"}`+"\n",
+					fmt.Fprintf(syncEvents, `{"event":"sync_warning","resource":"%s","status":%d,"reason":"%s","message":"%s"}`+"\n",
 						resource, w.Status, w.Reason, strings.ReplaceAll(w.Message, `"`, `\"`))
 				}
 				return syncResult{Resource: resource, Count: totalCount, Warn: fmt.Errorf("skipped %s: %s", resource, w.Reason), Duration: time.Since(started)}
 			}
 			if !humanFriendly {
-				fmt.Fprintln(os.Stdout, syncErrorJSON(resource, "", err))
+				fmt.Fprintln(syncEvents, syncErrorJSON(resource, "", err))
 			}
 			return syncResult{Resource: resource, Count: totalCount, Err: fmt.Errorf("fetching %s: %w", resource, err), Duration: time.Since(started)}
 		}
@@ -504,7 +510,7 @@ func syncResource(ctx context.Context, c interface {
 		// sees a clean exit.
 		if isDryRunResponse(data) {
 			if !humanFriendly {
-				fmt.Fprintf(os.Stdout, `{"event":"sync_dryrun","resource":"%s"}`+"\n", resource)
+				fmt.Fprintf(syncEvents, `{"event":"sync_dryrun","resource":"%s"}`+"\n", resource)
 			}
 			return syncResult{Resource: resource, Count: 0, Duration: time.Since(started)}
 		}
@@ -535,7 +541,7 @@ func syncResource(ctx context.Context, c interface {
 			// Single object response - try to store as-is
 			if err := upsertSingleObject(db, resource, data); err != nil {
 				if !humanFriendly {
-					fmt.Fprintln(os.Stdout, syncErrorJSON(resource, "", err))
+					fmt.Fprintln(syncEvents, syncErrorJSON(resource, "", err))
 				}
 				return syncResult{Resource: resource, Err: err, Duration: time.Since(started)}
 			}
@@ -557,7 +563,7 @@ func syncResource(ctx context.Context, c interface {
 		stored, extractFailures, err := upsertResourceBatch(db, resource, items)
 		if err != nil {
 			if !humanFriendly {
-				fmt.Fprintln(os.Stdout, syncErrorJSON(resource, "", err))
+				fmt.Fprintln(syncEvents, syncErrorJSON(resource, "", err))
 			}
 			return syncResult{Resource: resource, Count: totalCount, Err: fmt.Errorf("upserting batch for %s: %w", resource, err), Duration: time.Since(started)}
 		}
@@ -574,7 +580,7 @@ func syncResource(ctx context.Context, c interface {
 			if humanFriendly {
 				fmt.Fprintf(os.Stderr, "warning: %s returned %d items but stored 0 — the local store will be empty for this resource. Likely cause: scalar item shape rather than objects with extractable IDs.\n", resource, len(items))
 			} else {
-				fmt.Fprintf(os.Stdout, `{"event":"sync_anomaly","resource":"%s","consumed":%d,"stored":0,"reason":"all_items_failed_id_extraction"}`+"\n", resource, len(items))
+				fmt.Fprintf(syncEvents, `{"event":"sync_anomaly","resource":"%s","consumed":%d,"stored":0,"reason":"all_items_failed_id_extraction"}`+"\n", resource, len(items))
 			}
 			anomalyEmitted = true
 		} else if extractFailures > 0 && !anomalyEmitted {
@@ -585,7 +591,7 @@ func syncResource(ctx context.Context, c interface {
 			if humanFriendly {
 				fmt.Fprintf(os.Stderr, "\nwarning: %s had %d item(s) on this page with no extractable primary key — those rows were dropped silently. Annotate the spec with x-resource-id to fix.\n", resource, extractFailures)
 			} else {
-				fmt.Fprintf(os.Stdout, `{"event":"sync_anomaly","resource":"%s","consumed":%d,"stored":%d,"count":%d,"reason":"primary_key_unresolved"}`+"\n", resource, len(items), stored, extractFailures)
+				fmt.Fprintf(syncEvents, `{"event":"sync_anomaly","resource":"%s","consumed":%d,"stored":%d,"count":%d,"reason":"primary_key_unresolved"}`+"\n", resource, len(items), stored, extractFailures)
 			}
 			anomalyEmitted = true
 		}
@@ -603,9 +609,9 @@ func syncResource(ctx context.Context, c interface {
 			}
 		} else {
 			if currentRate > 0 {
-				fmt.Fprintf(os.Stdout, `{"event":"sync_progress","resource":"%s","fetched":%d,"rate_rps":%.1f}`+"\n", resource, atomic.LoadInt64(&progressCount), currentRate)
+				fmt.Fprintf(syncEvents, `{"event":"sync_progress","resource":"%s","fetched":%d,"rate_rps":%.1f}`+"\n", resource, atomic.LoadInt64(&progressCount), currentRate)
 			} else {
-				fmt.Fprintf(os.Stdout, `{"event":"sync_progress","resource":"%s","fetched":%d}`+"\n", resource, atomic.LoadInt64(&progressCount))
+				fmt.Fprintf(syncEvents, `{"event":"sync_progress","resource":"%s","fetched":%d}`+"\n", resource, atomic.LoadInt64(&progressCount))
 			}
 		}
 
@@ -621,7 +627,7 @@ func syncResource(ctx context.Context, c interface {
 				if humanFriendly {
 					fmt.Fprintf(os.Stderr, "\n  %s: reached --max-pages limit (%d pages, %d items)\n", resource, maxPages, totalCount)
 				} else {
-					fmt.Fprintf(os.Stdout, `{"event":"sync_warning","resource":"%s","reason":"max_pages_cap_hit","message":"reached --max-pages cap of %d; data may be truncated. Re-run with --max-pages 0 (unlimited) or higher to verify."}`+"\n", resource, maxPages)
+					fmt.Fprintf(syncEvents, `{"event":"sync_warning","resource":"%s","reason":"max_pages_cap_hit","message":"reached --max-pages cap of %d; data may be truncated. Re-run with --max-pages 0 (unlimited) or higher to verify."}`+"\n", resource, maxPages)
 				}
 			}
 			break
@@ -637,7 +643,7 @@ func syncResource(ctx context.Context, c interface {
 			if humanFriendly {
 				fmt.Fprintf(os.Stderr, "\n  %s: API returned the same next cursor across two pages; aborting to prevent budget waste.\n", resource)
 			} else {
-				fmt.Fprintf(os.Stdout, `{"event":"sync_warning","resource":"%s","reason":"stuck_pagination","message":"API returned the same next cursor across two pages for resource %s; aborting to prevent budget waste."}`+"\n", resource, resource)
+				fmt.Fprintf(syncEvents, `{"event":"sync_warning","resource":"%s","reason":"stuck_pagination","message":"API returned the same next cursor across two pages for resource %s; aborting to prevent budget waste."}`+"\n", resource, resource)
 			}
 			break
 		}
@@ -686,12 +692,12 @@ func syncResource(ctx context.Context, c interface {
 		if humanFriendly {
 			fmt.Fprintf(os.Stderr, "\nwarning: %s consumed %d items, extracted %d primary keys, but stored 0 rows — extraction succeeded yet nothing landed. Investigate FTS triggers / transaction rollback / encoding.\n", resource, consumedTotal, consumedTotal-extractFailureTotal)
 		} else {
-			fmt.Fprintf(os.Stdout, `{"event":"sync_anomaly","resource":"%s","consumed":%d,"stored":0,"extract_failures":%d,"reason":"stored_count_zero_after_extraction"}`+"\n", resource, consumedTotal, extractFailureTotal)
+			fmt.Fprintf(syncEvents, `{"event":"sync_anomaly","resource":"%s","consumed":%d,"stored":0,"extract_failures":%d,"reason":"stored_count_zero_after_extraction"}`+"\n", resource, consumedTotal, extractFailureTotal)
 		}
 	}
 
 	if !humanFriendly {
-		fmt.Fprintf(os.Stdout, `{"event":"sync_complete","resource":"%s","total":%d,"duration_ms":%d}`+"\n", resource, totalCount, time.Since(started).Milliseconds())
+		fmt.Fprintf(syncEvents, `{"event":"sync_complete","resource":"%s","total":%d,"duration_ms":%d}`+"\n", resource, totalCount, time.Since(started).Milliseconds())
 	}
 
 	return syncResult{Resource: resource, Count: totalCount, Duration: time.Since(started)}
@@ -1123,7 +1129,10 @@ func defaultSyncResources() []string {
 // flat resources plus any parent-child dependents. Used by --resource-param
 // validation to reject misspellings before they become silent no-ops.
 func knownSyncResourceNames() []string {
-	names := defaultSyncResources()
+	names := []string{
+		"currencies",
+		"projects",
+	}
 	for _, dep := range dependentResourceDefs() {
 		names = append(names, dep.Name)
 	}
@@ -1149,18 +1158,26 @@ func syncResourcePath(resource string) (string, error) {
 // records' KeyField via json_extract rather than from the parent table's primary key.
 // Populated from a spec-declared walker (Endpoint.Walker.KeyField in internal YAML,
 // or `key_field` under `x-pp-sync-walker` in OpenAPI). Empty KeyField preserves the
-// existing parent-primary-key flow byte-for-byte.
+// parent-primary-key flow.
 type dependentResourceDef struct {
 	Name          string
 	ParentTable   string
 	ParentIDParam string
 	PathTemplate  string
 	KeyField      string
+	PathParams    []dependentPathParamDef
+}
+
+type dependentPathParamDef struct {
+	Param string
+	Field string
 }
 
 func dependentResourceDefs() []dependentResourceDef {
 	return []dependentResourceDef{
-		{Name: "tasks", ParentTable: "projects", ParentIDParam: "projectId", PathTemplate: "/projects/{projectId}/tasks", KeyField: ""},
+		{Name: "tasks", ParentTable: "projects", ParentIDParam: "projectId", PathTemplate: "/projects/{projectId}/tasks", KeyField: "", PathParams: []dependentPathParamDef{
+			{Param: "projectId", Field: "id"},
+		}},
 	}
 }
 
@@ -1170,7 +1187,7 @@ func dependentResourceDefs() []dependentResourceDef {
 func syncDependentResources(ctx context.Context, c interface {
 	Get(context.Context, string, map[string]string) (json.RawMessage, error)
 	RateLimit() float64
-}, db *store.Store, sinceTS string, full bool, maxPages int, latestOnly bool, parentFilter []string, userParams *syncUserParams) []syncResult {
+}, db *store.Store, sinceTS string, full bool, maxPages int, latestOnly bool, parentFilter []string, userParams *syncUserParams, syncEvents io.Writer) []syncResult {
 	allow := make(map[string]bool, len(parentFilter))
 	for _, r := range parentFilter {
 		allow[r] = true
@@ -1180,7 +1197,7 @@ func syncDependentResources(ctx context.Context, c interface {
 		if len(allow) > 0 && !allow[dep.ParentTable] && !allow[dep.Name] {
 			continue
 		}
-		res := syncDependentResource(ctx, c, db, dep, sinceTS, full, maxPages, latestOnly, userParams)
+		res := syncDependentResource(ctx, c, db, dep, sinceTS, full, maxPages, latestOnly, userParams, syncEvents)
 		results = append(results, res)
 	}
 	return results
@@ -1190,24 +1207,23 @@ func syncDependentResources(ctx context.Context, c interface {
 func syncDependentResource(ctx context.Context, c interface {
 	Get(context.Context, string, map[string]string) (json.RawMessage, error)
 	RateLimit() float64
-}, db *store.Store, dep dependentResourceDef, sinceTS string, full bool, maxPages int, latestOnly bool, userParams *syncUserParams) syncResult {
+}, db *store.Store, dep dependentResourceDef, sinceTS string, full bool, maxPages int, latestOnly bool, userParams *syncUserParams, syncEvents io.Writer) syncResult {
 	started := time.Now()
-
-	// Query parent table for the keys to substitute into the child path.
-	// When KeyField is empty, use the parent's primary key via ListIDs
-	// (the original flat parent-child flow). When KeyField is set, the
-	// spec declared a walker that extracts a non-PK field from each parent
-	// record — ListField looks up the field in the parent's typed column
-	// if present, otherwise json_extract from the generic resources table.
-	var parentIDs []string
-	var err error
-	if dep.KeyField != "" {
-		parentIDs, err = db.ListField(dep.ParentTable, dep.KeyField)
-	} else {
-		parentIDs, err = db.ListIDs(dep.ParentTable)
+	if syncEvents == nil {
+		syncEvents = io.Discard
 	}
-	if err != nil || len(parentIDs) == 0 {
-		if len(parentIDs) == 0 {
+
+	pathParams := dep.PathParams
+	if len(pathParams) == 0 {
+		field := "id"
+		if dep.KeyField != "" {
+			field = dep.KeyField
+		}
+		pathParams = []dependentPathParamDef{{Param: dep.ParentIDParam, Field: field}}
+	}
+	parentRows, err := dependentParentRows(db, dep.ParentTable, pathParams)
+	if err != nil || len(parentRows) == 0 {
+		if len(parentRows) == 0 {
 			if humanFriendly {
 				fmt.Fprintf(os.Stderr, "  %s: skipping (parent table %s is empty, sync it first)\n", dep.Name, dep.ParentTable)
 			}
@@ -1217,7 +1233,7 @@ func syncDependentResource(ctx context.Context, c interface {
 	}
 
 	if humanFriendly {
-		fmt.Fprintf(os.Stderr, "  %s: syncing for %d %s parents\n", dep.Name, len(parentIDs), dep.ParentTable)
+		fmt.Fprintf(os.Stderr, "  %s: syncing for %d %s parents\n", dep.Name, len(parentRows), dep.ParentTable)
 	}
 
 	var totalCount int
@@ -1230,7 +1246,7 @@ func syncDependentResource(ctx context.Context, c interface {
 		if humanFriendly {
 			fmt.Fprintf(os.Stderr, "  %s: incremental sync ignored (endpoint declares no temporal filter; falling back to full pagination)\n", dep.Name)
 		} else {
-			fmt.Fprintf(os.Stdout, `{"event":"sync_warning","resource":"%s","reason":"resource_not_incremental","message":"endpoint does not declare a temporal filter parameter; incremental sync has no effect for this resource"}`+"\n", dep.Name)
+			fmt.Fprintf(syncEvents, `{"event":"sync_warning","resource":"%s","reason":"resource_not_incremental","message":"endpoint does not declare a temporal filter parameter; incremental sync has no effect for this resource"}`+"\n", dep.Name)
 		}
 		depSinceTS = ""
 	}
@@ -1242,13 +1258,19 @@ func syncDependentResource(ctx context.Context, c interface {
 	depAnomalyEmitted := false
 	parentFKKey := dep.ParentTable + "_id"
 
-	for idx, parentID := range parentIDs {
+	for idx, parentRow := range parentRows {
+		parentID := parentRow["id"]
+		if parentID == "" {
+			parentID = parentRow[pathParams[0].Field]
+		}
 		parentIDJSON, _ := json.Marshal(parentID)
-		// Build child endpoint path by replacing the param placeholder
-		path := strings.Replace(dep.PathTemplate, "{"+dep.ParentIDParam+"}", parentID, 1)
+		path := dep.PathTemplate
+		for _, pathParam := range pathParams {
+			path = replacePathParam(path, pathParam.Param, parentRow[pathParam.Field])
+		}
 
 		if humanFriendly {
-			fmt.Fprintf(os.Stderr, "\r  %s: syncing for %s (%d/%d parents)", dep.Name, dep.ParentTable, idx+1, len(parentIDs))
+			fmt.Fprintf(os.Stderr, "\r  %s: syncing for %s (%d/%d parents)", dep.Name, dep.ParentTable, idx+1, len(parentRows))
 		}
 
 		cursor := ""
@@ -1285,7 +1307,7 @@ func syncDependentResource(ctx context.Context, c interface {
 					if humanFriendly {
 						fmt.Fprintf(os.Stderr, "\n  %s: access denied for parent %s: %s\n", dep.Name, parentID, w.Reason)
 					} else {
-						fmt.Fprintf(os.Stdout, `{"event":"sync_warning","resource":"%s","parent":"%s","status":%d,"reason":"%s","message":"%s"}`+"\n",
+						fmt.Fprintf(syncEvents, `{"event":"sync_warning","resource":"%s","parent":"%s","status":%d,"reason":"%s","message":"%s"}`+"\n",
 							dep.Name, parentID, w.Status, w.Reason, strings.ReplaceAll(w.Message, `"`, `\"`))
 					}
 				} else if humanFriendly {
@@ -1294,7 +1316,7 @@ func syncDependentResource(ctx context.Context, c interface {
 					// Non-warning failures were previously silent in JSON mode —
 					// operators only saw the missing rows. Emit a structured
 					// sync_error so the API body and status are inspectable.
-					fmt.Fprintln(os.Stdout, syncErrorJSON(dep.Name, parentID, err))
+					fmt.Fprintln(syncEvents, syncErrorJSON(dep.Name, parentID, err))
 				}
 				break
 			}
@@ -1324,6 +1346,16 @@ func syncDependentResource(ctx context.Context, c interface {
 					if _, ok := obj[parentFKKey]; !ok {
 						obj[parentFKKey] = parentIDJSON
 					}
+					for _, pathParam := range pathParams {
+						if pathParam.Field == "id" {
+							continue
+						}
+						if _, ok := obj[pathParam.Field]; ok {
+							continue
+						}
+						valueJSON, _ := json.Marshal(parentRow[pathParam.Field])
+						obj[pathParam.Field] = valueJSON
+					}
 					if modified, err := json.Marshal(obj); err == nil {
 						items[i] = modified
 					}
@@ -1348,14 +1380,14 @@ func syncDependentResource(ctx context.Context, c interface {
 				if humanFriendly {
 					fmt.Fprintf(os.Stderr, "\nwarning: %s returned %d items for parent %s but stored 0 — likely scalar item shape or unrecognized primary-key field name.\n", dep.Name, len(items), parentID)
 				} else {
-					fmt.Fprintf(os.Stdout, `{"event":"sync_anomaly","resource":"%s","parent":"%s","consumed":%d,"stored":0,"reason":"all_items_failed_id_extraction"}`+"\n", dep.Name, parentID, len(items))
+					fmt.Fprintf(syncEvents, `{"event":"sync_anomaly","resource":"%s","parent":"%s","consumed":%d,"stored":0,"reason":"all_items_failed_id_extraction"}`+"\n", dep.Name, parentID, len(items))
 				}
 				depAnomalyEmitted = true
 			} else if extractFailures > 0 && stored > 0 && !depAnomalyEmitted {
 				if humanFriendly {
 					fmt.Fprintf(os.Stderr, "\nwarning: %s had %d item(s) with no extractable primary key — those rows were dropped silently. Annotate the spec with x-resource-id to fix.\n", dep.Name, extractFailures)
 				} else {
-					fmt.Fprintf(os.Stdout, `{"event":"sync_anomaly","resource":"%s","parent":"%s","consumed":%d,"stored":%d,"count":%d,"reason":"primary_key_unresolved"}`+"\n", dep.Name, parentID, len(items), stored, extractFailures)
+					fmt.Fprintf(syncEvents, `{"event":"sync_anomaly","resource":"%s","parent":"%s","consumed":%d,"stored":%d,"count":%d,"reason":"primary_key_unresolved"}`+"\n", dep.Name, parentID, len(items), stored, extractFailures)
 				}
 				depAnomalyEmitted = true
 			}
@@ -1368,7 +1400,7 @@ func syncDependentResource(ctx context.Context, c interface {
 					if humanFriendly {
 						fmt.Fprintf(os.Stderr, "\n  %s: reached --max-pages limit (%d pages, %d items) for parent %s\n", dep.Name, maxPages, totalCount, parentID)
 					} else {
-						fmt.Fprintf(os.Stdout, `{"event":"sync_warning","resource":"%s","parent":"%s","reason":"max_pages_cap_hit","message":"reached --max-pages cap of %d; data may be truncated. Re-run with --max-pages 0 (unlimited) or higher to verify."}`+"\n", dep.Name, parentID, maxPages)
+						fmt.Fprintf(syncEvents, `{"event":"sync_warning","resource":"%s","parent":"%s","reason":"max_pages_cap_hit","message":"reached --max-pages cap of %d; data may be truncated. Re-run with --max-pages 0 (unlimited) or higher to verify."}`+"\n", dep.Name, parentID, maxPages)
 					}
 				}
 				break
@@ -1380,7 +1412,7 @@ func syncDependentResource(ctx context.Context, c interface {
 				if humanFriendly {
 					fmt.Fprintf(os.Stderr, "\n  %s: API returned the same next cursor across two pages for parent %s; aborting to prevent budget waste.\n", dep.Name, parentID)
 				} else {
-					fmt.Fprintf(os.Stdout, `{"event":"sync_warning","resource":"%s","parent":"%s","reason":"stuck_pagination","message":"API returned the same next cursor across two pages for resource %s; aborting to prevent budget waste."}`+"\n", dep.Name, parentID, dep.Name)
+					fmt.Fprintf(syncEvents, `{"event":"sync_warning","resource":"%s","parent":"%s","reason":"stuck_pagination","message":"API returned the same next cursor across two pages for resource %s; aborting to prevent budget waste."}`+"\n", dep.Name, parentID, dep.Name)
 				}
 				break
 			}
@@ -1422,21 +1454,61 @@ func syncDependentResource(ctx context.Context, c interface {
 		if humanFriendly {
 			fmt.Fprintf(os.Stderr, "\nwarning: %s consumed %d items, extracted %d primary keys, but stored 0 rows — extraction succeeded yet nothing landed. Investigate FTS triggers / transaction rollback / encoding.\n", dep.Name, depConsumedTotal, depConsumedTotal-depExtractFailureTotal)
 		} else {
-			fmt.Fprintf(os.Stdout, `{"event":"sync_anomaly","resource":"%s","consumed":%d,"stored":0,"extract_failures":%d,"reason":"stored_count_zero_after_extraction"}`+"\n", dep.Name, depConsumedTotal, depExtractFailureTotal)
+			fmt.Fprintf(syncEvents, `{"event":"sync_anomaly","resource":"%s","consumed":%d,"stored":0,"extract_failures":%d,"reason":"stored_count_zero_after_extraction"}`+"\n", dep.Name, depConsumedTotal, depExtractFailureTotal)
 		}
 	}
 
 	// If every parent was access-denied and nothing was synced, surface as a
 	// warning so the run-level summary and exit code reflect insufficient access.
-	if deniedParents == len(parentIDs) && totalCount == 0 && firstDenial != nil {
+	if deniedParents == len(parentRows) && totalCount == 0 && firstDenial != nil {
 		return syncResult{
 			Resource: dep.Name,
 			Count:    0,
-			Warn:     fmt.Errorf("skipped %s: %s on all %d parents", dep.Name, firstDenial.Reason, len(parentIDs)),
+			Warn:     fmt.Errorf("skipped %s: %s on all %d parents", dep.Name, firstDenial.Reason, len(parentRows)),
 			Duration: time.Since(started),
 		}
 	}
 	return syncResult{Resource: dep.Name, Count: totalCount, Duration: time.Since(started)}
+}
+
+func dependentParentFields(pathParams []dependentPathParamDef) []string {
+	fields := []string{"id"}
+	seen := map[string]bool{"id": true}
+	for _, pathParam := range pathParams {
+		if pathParam.Field == "" || seen[pathParam.Field] {
+			continue
+		}
+		fields = append(fields, pathParam.Field)
+		seen[pathParam.Field] = true
+	}
+	return fields
+}
+
+func dependentParentRows(db *store.Store, parentTable string, pathParams []dependentPathParamDef) ([]map[string]string, error) {
+	fields := dependentParentFields(pathParams)
+	if len(fields) == 1 {
+		values, err := db.ListIDs(parentTable)
+		if err != nil {
+			return nil, err
+		}
+		rows := make([]map[string]string, 0, len(values))
+		for _, value := range values {
+			rows = append(rows, map[string]string{"id": value})
+		}
+		return rows, nil
+	}
+	if len(pathParams) == 1 && len(fields) == 2 && fields[0] == "id" {
+		values, err := db.ListField(parentTable, fields[1])
+		if err != nil {
+			return nil, err
+		}
+		rows := make([]map[string]string, 0, len(values))
+		for _, value := range values {
+			rows = append(rows, map[string]string{"id": value, fields[1]: value})
+		}
+		return rows, nil
+	}
+	return db.ListFieldSets(parentTable, fields)
 }
 
 // resourceIDFieldOverrides projects per-resource IDField (set by the profiler

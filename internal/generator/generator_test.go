@@ -66,6 +66,10 @@ func TestGenerateProjectsCompile(t *testing.T) {
 		"internal/cliutil/extractnumber_test.go",
 		"internal/cliutil/jwtshape.go",
 		"internal/cliutil/jwtshape_test.go",
+		"internal/cliutil/duration.go",
+		"internal/cliutil/duration_test.go",
+		"internal/cliutil/odata_date.go",
+		"internal/cliutil/odata_date_test.go",
 		"internal/cliutil/cliutil_test.go",
 		"internal/client/client.go",
 		"internal/client/client_test.go",
@@ -89,9 +93,9 @@ func TestGenerateProjectsCompile(t *testing.T) {
 		// Bump it AND add to mustInclude above when adding always-emitted
 		// templates. Per-spec dynamic files (per-resource command files,
 		// generated tests) account for the difference between fixtures.
-		{name: "stytch", specPath: filepath.Join("..", "..", "testdata", "stytch.yaml"), expectedFiles: 65},
-		{name: "clerk", specPath: filepath.Join("..", "..", "testdata", "clerk.yaml"), expectedFiles: 70},
-		{name: "loops", specPath: filepath.Join("..", "..", "testdata", "loops.yaml"), expectedFiles: 67},
+		{name: "stytch", specPath: filepath.Join("..", "..", "testdata", "stytch.yaml"), expectedFiles: 69},
+		{name: "clerk", specPath: filepath.Join("..", "..", "testdata", "clerk.yaml"), expectedFiles: 74},
+		{name: "loops", specPath: filepath.Join("..", "..", "testdata", "loops.yaml"), expectedFiles: 71},
 	}
 
 	for _, tt := range tests {
@@ -1516,6 +1520,18 @@ func runGoCommandRequired(t *testing.T, dir string, args ...string) {
 	require.NoError(t, err, string(output))
 }
 
+func runGeneratedBinary(t *testing.T, binaryPath string, args ...string) (string, string) {
+	t.Helper()
+
+	cmd := exec.Command(binaryPath, args...)
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	require.NoError(t, err, "stdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
+	return stdout.String(), stderr.String()
+}
+
 // --- Unit 1: Template Regression Tests ---
 
 func TestGenerateWithNoAuth(t *testing.T) {
@@ -2389,7 +2405,7 @@ func TestSyncResourceExtractsHTMLLinks(t *testing.T) {
 	}
 	defer db.Close()
 
-	res := syncResource(context.Background(), htmlSyncClient{}, db, "pages", "", false, 1, false, nil)
+	res := syncResource(context.Background(), htmlSyncClient{}, db, "pages", "", false, 1, false, nil, nil)
 	if res.Err != nil {
 		t.Fatalf("syncResource error: %v", res.Err)
 	}
@@ -2429,7 +2445,7 @@ func TestSyncDependentResourceContinuesAfterHTMLExtractionError(t *testing.T) {
 		dependentHTMLSyncClient{},
 		db,
 		dependentResourceDef{Name: "messages", ParentTable: "channels", ParentIDParam: "channelId", PathTemplate: "/channels/{channelId}/messages"},
-		"", false, 1, false, nil,
+		"", false, 1, false, nil, nil,
 	)
 	if res.Err != nil {
 		t.Fatalf("syncDependentResource error: %v", res.Err)
@@ -2477,6 +2493,17 @@ func TestGenerateHTMLExtractionEmbeddedJSONMode(t *testing.T) {
 			_, _ = w.Write([]byte(`<html><body>
 				<script id="ARTICLE_DATA" type="application/json">{"items":[{"slug":"a"},{"slug":"b"}]}</script>
 			</body></html>`))
+		case "/jsonld":
+			// JSON-LD structured data uses an attribute selector emitted by
+			// browser sniffing for schema.org SSR pages.
+			_, _ = w.Write([]byte(`<html><body>
+				<script type="application/ld+json">{"@type":"Restaurant","name":"El Farolito","servesCuisine":["Tacos","Mexicana"]}</script>
+			</body></html>`))
+		case "/state-view":
+			// Some SSR pages expose state in a classed script tag.
+			_, _ = w.Write([]byte(`<html><body>
+				<script class="state-view" type="application/json">{"items":[{"slug":"state-a"}]}</script>
+			</body></html>`))
 		case "/missing":
 			// No matching script tag — should produce an extractor error.
 			_, _ = w.Write([]byte(`<html><body><p>nothing here</p></body></html>`))
@@ -2521,6 +2548,54 @@ func TestGenerateHTMLExtractionEmbeddedJSONMode(t *testing.T) {
 						HTMLExtract: &spec.HTMLExtract{
 							Mode:           spec.HTMLExtractModeEmbeddedJSON,
 							ScriptSelector: "script#ARTICLE_DATA",
+						},
+						Response: spec.ResponseDef{Type: "object"},
+					},
+				},
+			},
+			"jsonld": {
+				Description: "Read schema.org JSON-LD",
+				Endpoints: map[string]spec.Endpoint{
+					"show": {
+						Method:         "GET",
+						Path:           "/jsonld",
+						Description:    "Read structured data",
+						ResponseFormat: spec.ResponseFormatHTML,
+						HTMLExtract: &spec.HTMLExtract{
+							Mode:           spec.HTMLExtractModeEmbeddedJSON,
+							ScriptSelector: `script[type="application/ld+json"]`,
+						},
+						Response: spec.ResponseDef{Type: "object"},
+					},
+				},
+			},
+			"stateview": {
+				Description: "Read classed state view JSON",
+				Endpoints: map[string]spec.Endpoint{
+					"show": {
+						Method:         "GET",
+						Path:           "/state-view",
+						Description:    "Read state view data",
+						ResponseFormat: spec.ResponseFormatHTML,
+						HTMLExtract: &spec.HTMLExtract{
+							Mode:           spec.HTMLExtractModeEmbeddedJSON,
+							ScriptSelector: "script.state-view",
+						},
+						Response: spec.ResponseDef{Type: "object"},
+					},
+				},
+			},
+			"badattr": {
+				Description: "Reject unsupported attribute selectors",
+				Endpoints: map[string]spec.Endpoint{
+					"show": {
+						Method:         "GET",
+						Path:           "/jsonld",
+						Description:    "Read structured data with an invalid selector",
+						ResponseFormat: spec.ResponseFormatHTML,
+						HTMLExtract: &spec.HTMLExtract{
+							Mode:           spec.HTMLExtractModeEmbeddedJSON,
+							ScriptSelector: "script[async]",
 						},
 						Response: spec.ResponseDef{Type: "object"},
 					},
@@ -2582,6 +2657,40 @@ func TestGenerateHTMLExtractionEmbeddedJSONMode(t *testing.T) {
 	require.Len(t, articleEnv.Results, 2)
 	assert.Equal(t, "a", articleEnv.Results[0]["slug"])
 	assert.Equal(t, "b", articleEnv.Results[1]["slug"])
+
+	// Attribute selector: returns schema.org JSON-LD blocks such as restaurants,
+	// products, and recipes.
+	cmd = exec.Command(binaryPath, "jsonld", "show", "--json")
+	cmd.Env = append(os.Environ(), "EMBEDDEDJSON_BASE_URL="+server.URL)
+	out, err = cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+	var jsonLDEnv struct {
+		Results map[string]any `json:"results"`
+	}
+	require.NoError(t, json.Unmarshal(out, &jsonLDEnv), string(out))
+	assert.Equal(t, "Restaurant", jsonLDEnv.Results["@type"])
+	assert.Equal(t, "El Farolito", jsonLDEnv.Results["name"])
+
+	// Class selector: returns state blobs emitted as classed script tags.
+	cmd = exec.Command(binaryPath, "stateview", "show", "--json")
+	cmd.Env = append(os.Environ(), "EMBEDDEDJSON_BASE_URL="+server.URL)
+	out, err = cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+	var stateViewEnv struct {
+		Results []map[string]any `json:"results"`
+	}
+	require.NoError(t, json.Unmarshal(out, &stateViewEnv), string(out))
+	require.Len(t, stateViewEnv.Results, 1)
+	assert.Equal(t, "state-a", stateViewEnv.Results[0]["slug"])
+
+	// Unsupported attribute-existence selectors should fail explicitly instead
+	// of silently degrading to a broad tag-only match.
+	cmd = exec.Command(binaryPath, "badattr", "show", "--json")
+	cmd.Env = append(os.Environ(), "EMBEDDEDJSON_BASE_URL="+server.URL)
+	out, err = cmd.CombinedOutput()
+	require.Error(t, err, string(out))
+	assert.Contains(t, string(out), "embedded-json: invalid selector")
+	assert.Contains(t, string(out), `tag[attr="value"]`)
 
 	// Missing script tag: extractor reports an actionable error rather
 	// than silently returning empty data.
@@ -3625,7 +3734,7 @@ func TestSyncResourceIDWalksPostQueryPages(t *testing.T) {
 	defer db.Close()
 
 	client := &postQuerySyncClient{}
-	res := syncResource(context.Background(), client, db, "tickets", "", true, 10, false, nil)
+	res := syncResource(context.Background(), client, db, "tickets", "", true, 10, false, nil, nil)
 	if res.Err != nil {
 		t.Fatalf("syncResource error: %v", res.Err)
 	}
@@ -4312,7 +4421,7 @@ func TestSyncDependentResourcePopulatesTypedParentFK(t *testing.T) {
 		dependentParentFKClient{},
 		db,
 		dependentResourceDef{Name: "contacts", ParentTable: "lists", ParentIDParam: "listId", PathTemplate: "/lists/{listId}/contacts"},
-		"", false, 1, false, nil,
+		"", false, 1, false, nil, nil,
 	)
 	if res.Err != nil {
 		t.Fatalf("syncDependentResource error: %v", res.Err)
@@ -4352,6 +4461,164 @@ func TestSyncDependentResourcePopulatesTypedParentFK(t *testing.T) {
 
 	runGoCommandRequired(t, outputDir, "mod", "tidy")
 	runGoCommandRequired(t, outputDir, "test", "-run", "TestSyncDependentResourcePopulatesTypedParentFK", "./internal/cli")
+}
+
+func TestSyncDependentResourceSubstitutesChainedPathParams(t *testing.T) {
+	t.Parallel()
+
+	apiSpec := minimalSpec("dependent-chained-params")
+	apiSpec.Resources = map[string]spec.Resource{
+		"channels": {
+			Description: "Channels",
+			Endpoints: map[string]spec.Endpoint{
+				"list": {
+					Method:   "GET",
+					Path:     "/channels",
+					Response: spec.ResponseDef{Type: "array"},
+				},
+			},
+		},
+		"messages": {
+			Description: "Messages",
+			Endpoints: map[string]spec.Endpoint{
+				"list": {
+					Method:   "GET",
+					Path:     "/channels/{channelId}/messages",
+					Response: spec.ResponseDef{Type: "array"},
+					Params:   []spec.Param{{Name: "channelId", Type: "string", Required: true, Positional: true}},
+				},
+			},
+		},
+		"reactions": {
+			Description: "Reactions",
+			Endpoints: map[string]spec.Endpoint{
+				"list": {
+					Method:   "GET",
+					Path:     "/channels/{channelId}/messages/{messageId}/reactions",
+					Response: spec.ResponseDef{Type: "array"},
+					Params: []spec.Param{
+						{Name: "channelId", Type: "string", Required: true, Positional: true},
+						{Name: "messageId", Type: "string", Required: true, Positional: true},
+					},
+				},
+			},
+		},
+	}
+
+	outputDir := filepath.Join(t.TempDir(), naming.CLI(apiSpec.Name))
+	gen := New(apiSpec, outputDir)
+	gen.VisionSet = VisionTemplateSet{Store: true, Sync: true}
+	gen.profile = &profiler.APIProfile{
+		SyncableResources: []profiler.SyncableResource{
+			{Name: "channels", Path: "/channels", Method: "GET"},
+		},
+		DependentSyncResources: []profiler.DependentResource{
+			{
+				Name:           "messages",
+				ParentResource: "channels",
+				ParentIDParam:  "channelId",
+				Path:           "/channels/{channelId}/messages",
+				Method:         "GET",
+				PathParams:     []profiler.DependentPathParam{{Param: "channelId", Field: "id"}},
+			},
+			{
+				Name:           "messages_reactions",
+				ParentResource: "messages",
+				ParentIDParam:  "messageId",
+				Path:           "/channels/{channelId}/messages/{messageId}/reactions",
+				Method:         "GET",
+				PathParams: []profiler.DependentPathParam{
+					{Param: "channelId", Field: "channels_id"},
+					{Param: "messageId", Field: "id"},
+				},
+			},
+		},
+	}
+	require.NoError(t, gen.Generate())
+
+	inlineTest := `package cli
+
+import (
+	"context"
+	"encoding/json"
+	"path/filepath"
+	"testing"
+
+	"` + naming.CLI(apiSpec.Name) + `/internal/store"
+)
+
+type dependentChainedParamClient struct {
+	t *testing.T
+}
+
+func (c dependentChainedParamClient) Get(ctx context.Context, path string, params map[string]string) (json.RawMessage, error) {
+	if path != "/channels/chan-1/messages/msg-1/reactions" {
+		c.t.Fatalf("path = %q, want /channels/chan-1/messages/msg-1/reactions", path)
+	}
+	return json.RawMessage(` + "`" + `[{"id":"react-1","emoji":"thumbsup"}]` + "`" + `), nil
+}
+
+func (dependentChainedParamClient) RateLimit() float64 {
+	return 0
+}
+
+func TestSyncDependentResourceSubstitutesChainedPathParams(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "data.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer db.Close()
+
+	if err := db.Upsert("messages", "msg-1", []byte(` + "`" + `{"id":"msg-1","channels_id":"chan-1","text":"hello"}` + "`" + `)); err != nil {
+		t.Fatalf("insert message: %v", err)
+	}
+
+	res := syncDependentResource(
+		context.Background(),
+		dependentChainedParamClient{t: t},
+		db,
+		dependentResourceDef{
+			Name: "messages_reactions",
+			ParentTable: "messages",
+			ParentIDParam: "messageId",
+			PathTemplate: "/channels/{channelId}/messages/{messageId}/reactions",
+			PathParams: []dependentPathParamDef{
+				{Param: "channelId", Field: "channels_id"},
+				{Param: "messageId", Field: "id"},
+			},
+		},
+		"", false, 1, false, nil, nil,
+	)
+	if res.Err != nil {
+		t.Fatalf("syncDependentResource error: %v", res.Err)
+	}
+	if res.Count != 1 {
+		t.Fatalf("synced count = %d, want 1", res.Count)
+	}
+
+	rows, err := db.DB().Query(` + "`" + `SELECT id, json_extract(data, '$.messages_id'), json_extract(data, '$.channels_id') FROM resources WHERE resource_type = 'messages_reactions'` + "`" + `)
+	if err != nil {
+		t.Fatalf("query reactions: %v", err)
+	}
+	defer rows.Close()
+
+	if !rows.Next() {
+		t.Fatalf("expected one reaction row")
+	}
+	var id, messagesID, channelsID string
+	if err := rows.Scan(&id, &messagesID, &channelsID); err != nil {
+		t.Fatalf("scan reaction: %v", err)
+	}
+	if id != "react-1" || messagesID != "msg-1" || channelsID != "chan-1" {
+		t.Fatalf("row = (%q, %q, %q), want (react-1, msg-1, chan-1)", id, messagesID, channelsID)
+	}
+}
+`
+	testPath := filepath.Join(outputDir, "internal", "cli", "dependent_chained_params_test.go")
+	require.NoError(t, os.WriteFile(testPath, []byte(inlineTest), 0o644))
+
+	runGoCommandRequired(t, outputDir, "mod", "tidy")
+	runGoCommandRequired(t, outputDir, "test", "-run", "TestSyncDependentResourceSubstitutesChainedPathParams", "./internal/cli")
 }
 
 func TestGenerateSimilarCommandUsesCompositeResourceKey(t *testing.T) {
@@ -7391,11 +7658,28 @@ func TestGeneratedOutput_WorkflowArchiveDelegatesToSyncResource(t *testing.T) {
 		workflowGo, err := os.ReadFile(filepath.Join(outputDir, "internal", "cli", "channel_workflow.go"))
 		require.NoError(t, err)
 		src := string(workflowGo)
+		syncGo, err := os.ReadFile(filepath.Join(outputDir, "internal", "cli", "sync.go"))
+		require.NoError(t, err)
+		syncSrc := string(syncGo)
 
 		assert.Contains(t, src, "func newWorkflowArchiveCmd(flags *rootFlags) *cobra.Command",
 			"archive command must be emitted when Sync is enabled")
 		assert.Contains(t, src, "syncResource(",
 			"archive must delegate to syncResource so it inherits the hardened sync loop")
+		assert.Contains(t, src, "syncEventWriter := cmd.OutOrStdout()",
+			"archive should default syncResource JSON events to the command stdout writer for non-json wrapper runs")
+		assert.Contains(t, src, "syncEventWriter = cmd.ErrOrStderr()",
+			"archive --json must route syncResource event NDJSON away from stdout")
+		assert.Contains(t, src, `nil, syncEventWriter)`,
+			"archive must pass the wrapper-selected event writer into syncResource")
+		assert.Contains(t, syncSrc, "syncEvents io.Writer",
+			"syncResource should expose an event writer parameter for wrapper callers")
+		assert.Contains(t, syncSrc, "syncEventWriter := cmd.OutOrStdout()",
+			"direct sync should honor Cobra's stdout writer")
+		assert.Contains(t, syncSrc, "userParams, syncEventWriter)",
+			"direct sync --json should keep emitting NDJSON events on stdout")
+		assert.Contains(t, syncSrc, `fmt.Fprintf(syncEvents, `+"`"+`{"event":"sync_start"`,
+			"syncResource events should write through the selected event writer")
 
 		assert.NotContains(t, src, `c.Get("/"+resource`,
 			"archive must not hardcode `/<resource>` paths (#1077 Bug 1)")
@@ -7424,6 +7708,64 @@ func TestGeneratedOutput_WorkflowArchiveDelegatesToSyncResource(t *testing.T) {
 		assert.Contains(t, src, "func newWorkflowStatusCmd",
 			"status subcommand must still be emitted")
 	})
+}
+
+func TestGeneratedOutput_WorkflowArchiveJSONKeepsSyncEventsOffStdout(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/items", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"id":"item-1","name":"one"}]`))
+	}))
+	t.Cleanup(server.Close)
+
+	apiSpec := minimalSpec("archive-json-runtime")
+	apiSpec.BaseURL = server.URL
+	apiSpec.Auth = spec.AuthConfig{Type: "none"}
+	apiSpec.Resources["items"] = spec.Resource{
+		Description: "Manage items",
+		Endpoints: map[string]spec.Endpoint{
+			"list": {
+				Method:      "GET",
+				Path:        "/items",
+				Description: "List items",
+				Response:    spec.ResponseDef{Type: "array"},
+			},
+		},
+	}
+
+	outputDir := filepath.Join(t.TempDir(), naming.CLI(apiSpec.Name))
+	gen := New(apiSpec, outputDir)
+	gen.VisionSet = VisionTemplateSet{Store: true, Sync: true}
+	require.NoError(t, gen.Generate())
+
+	binaryPath := filepath.Join(outputDir, naming.CLI(apiSpec.Name))
+	runGoCommand(t, outputDir, "build", "-o", binaryPath, "./cmd/"+naming.CLI(apiSpec.Name))
+
+	archiveDB := filepath.Join(t.TempDir(), "archive.db")
+	stdout, stderr := runGeneratedBinary(t, binaryPath, "workflow", "archive", "--json", "--db", archiveDB)
+	assert.NotContains(t, stdout, `"event":"sync_`,
+		"workflow archive --json stdout must be a single JSON document, not sync NDJSON")
+	assert.Contains(t, stderr, `"event":"sync_start"`,
+		"workflow archive --json should still surface sync progress on stderr")
+	var archiveSummary map[string]any
+	require.NoError(t, json.Unmarshal([]byte(stdout), &archiveSummary),
+		"workflow archive --json stdout should be exactly one JSON document")
+
+	syncJSONDB := filepath.Join(t.TempDir(), "sync-json.db")
+	stdout, stderr = runGeneratedBinary(t, binaryPath, "sync", "--json", "--db", syncJSONDB)
+	assert.Empty(t, stderr)
+	assert.Contains(t, stdout, `"event":"sync_start"`,
+		"direct sync --json should keep streaming sync events to stdout")
+	assert.Contains(t, stdout, `"event":"sync_complete"`)
+	assert.Contains(t, stdout, `"event":"sync_summary"`)
+
+	syncHumanDB := filepath.Join(t.TempDir(), "sync-human.db")
+	stdout, stderr = runGeneratedBinary(t, binaryPath, "sync", "--human-friendly", "--db", syncHumanDB)
+	assert.NotContains(t, stdout, `"event":"sync_`,
+		"human-friendly sync should not emit sync NDJSON on stdout")
+	assert.Contains(t, stderr, "Sync complete:")
 }
 
 func TestGeneratedOutput_PromotedCommandCompiles(t *testing.T) {
@@ -9703,6 +10045,17 @@ func assertVerifyEnvConcurrencyPin(t *testing.T, syncContent, cliutilImportPath,
 		label+": verify-env override must sit after the default-resolution block (as shipped)")
 }
 
+func assertSyncDefaultConcurrency(t *testing.T, syncContent string, want int, label string) {
+	t.Helper()
+	assert.Contains(t, syncContent,
+		fmt.Sprintf(`cmd.Flags().IntVar(&concurrency, "concurrency", %d, "Number of parallel sync workers")`, want),
+		label+": --concurrency flag default must match spec rate class")
+	assert.Regexp(t,
+		fmt.Sprintf(`if concurrency < 1 \{\s*concurrency = %d\s*\}`, want),
+		syncContent,
+		label+": invalid concurrency fallback must match spec rate class")
+}
+
 // TestGeneratedSyncForcesSingleWorkerUnderVerifyEnv pins the verify-mode
 // override in the REST sync template. Without it, the worker pool races on
 // SQLite writes once network latency disappears, tripping SQLITE_BUSY
@@ -9774,6 +10127,23 @@ func TestGeneratedGraphQLSyncForcesSingleWorkerUnderVerifyEnv(t *testing.T) {
 
 	runGoCommand(t, outputDir, "mod", "tidy")
 	runGoCommand(t, outputDir, "build", "./...")
+}
+
+func TestGeneratedGraphQLSyncConcurrencyDefaultHonorsRateClass(t *testing.T) {
+	t.Parallel()
+
+	gqlSpec, err := graphql.ParseSDL(filepath.Join("..", "..", "testdata", "graphql", "test.graphql"))
+	require.NoError(t, err)
+	gqlSpec.RateClass = spec.RateClassMonthly
+
+	outputDir := filepath.Join(t.TempDir(), naming.CLI(gqlSpec.Name))
+	gen := New(gqlSpec, outputDir)
+	require.NoError(t, gen.Generate())
+
+	syncGo, err := os.ReadFile(filepath.Join(outputDir, "internal", "cli", "sync.go"))
+	require.NoError(t, err)
+
+	assertSyncDefaultConcurrency(t, string(syncGo), 1, "GraphQL sync.go")
 }
 
 func TestGeneratedSyncAdvancesOffsetWhenHasMoreWithoutCursor(t *testing.T) {
@@ -11235,6 +11605,25 @@ func TestCacheKeyIncludesTemplateVars(t *testing.T) {
 	testPath := filepath.Join(outputDir, "internal", "client", "url_behavior_test.go")
 	require.NoError(t, os.WriteFile(testPath, []byte(behaviorTest), 0o644))
 	runGoCommand(t, outputDir, "test", "./internal/client", "-run", "TestBuildURL")
+}
+
+func TestGenerateInfersEndpointTemplateVarsFromBaseURL(t *testing.T) {
+	t.Parallel()
+
+	apiSpec := minimalSpec("tenant-api")
+	apiSpec.BaseURL = "https://{tenant}.api.example.com"
+	require.Empty(t, apiSpec.EndpointTemplateVars)
+
+	outputDir := filepath.Join(t.TempDir(), naming.CLI(apiSpec.Name))
+	gen := New(apiSpec, outputDir)
+	require.Equal(t, []string{"tenant"}, apiSpec.EndpointTemplateVars)
+	require.NoError(t, gen.Generate())
+
+	_, err := os.Stat(filepath.Join(outputDir, "internal", "client", "url.go"))
+	require.NoError(t, err, "url.go should be generated when BaseURL contains a placeholder")
+
+	runGoCommand(t, outputDir, "mod", "tidy")
+	runGoCommand(t, outputDir, "build", "./...")
 }
 
 // TestGenerateEndpointTemplateVarsVerifyPlaceholderFallback covers the

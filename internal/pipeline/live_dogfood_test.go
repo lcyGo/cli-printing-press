@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -43,6 +44,26 @@ func TestRunLiveDogfoodDetectsJSONParseFailure(t *testing.T) {
 	require.NotNil(t, jsonFailure)
 	assert.Equal(t, LiveDogfoodStatusFail, jsonFailure.Status)
 	assert.Contains(t, jsonFailure.Reason, "invalid JSON")
+}
+
+func TestRunLiveDogfoodDetectsTruncatedJSONOutput(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses a shell script as the fake binary; skip on Windows")
+	}
+
+	dir, binaryName := writeLiveDogfoodLargeJSONFixture(t)
+	report, err := RunLiveDogfood(LiveDogfoodOptions{
+		CLIDir:     dir,
+		BinaryName: binaryName,
+		Level:      "full",
+		Timeout:    5 * time.Second,
+	})
+	require.NoError(t, err)
+
+	result := findResultByCommandKind(report, "widgets large", LiveDogfoodTestJSON)
+	require.NotNil(t, result)
+	assert.Equal(t, LiveDogfoodStatusFail, result.Status)
+	assert.Equal(t, "output exceeded capture cap", result.Reason)
 }
 
 func TestRunLiveDogfoodWritesAcceptanceMarkerOnPass(t *testing.T) {
@@ -235,6 +256,163 @@ func TestRunLiveDogfoodProcessSetsDogfoodEnvVar(t *testing.T) {
 	run := runLiveDogfoodProcess(binPath, dir, nil, 5*time.Second)
 	require.NoError(t, run.err, "fixture: %s", run.stderr)
 	assert.Equal(t, "1", run.stdout, "live-dogfood subprocess should see PRINTING_PRESS_DOGFOOD=1")
+}
+
+func TestRunLiveDogfoodProcessRetriesTransientAuth401(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses a shell script as the fake binary; skip on Windows")
+	}
+
+	dir := t.TempDir()
+	countPath := filepath.Join(dir, "count")
+	binPath := writeStubBinary(t, dir, "flaky-auth", `count_file="count"
+count=0
+if [ -f "$count_file" ]; then
+  count=$(cat "$count_file")
+fi
+count=$((count + 1))
+printf '%s' "$count" > "$count_file"
+if [ "$count" -eq 1 ]; then
+  echo 'Error: GET /api/v2/account/settings returned HTTP 401: {"error":"Couldn'\''t authenticate you"}' >&2
+  exit 1
+fi
+printf '{"ok":true}'
+`)
+
+	run := runLiveDogfoodProcess(binPath, dir, nil, 5*time.Second)
+	require.NoError(t, run.err, "fixture: %s", run.stderr)
+	assert.Equal(t, 0, run.exitCode)
+	assert.Equal(t, `{"ok":true}`, run.stdout)
+
+	count, err := os.ReadFile(countPath)
+	require.NoError(t, err)
+	assert.Equal(t, "2", string(count), "auth-shaped 401 should be retried once")
+}
+
+func TestRunLiveDogfoodSkipsPersistentAuth401AsRunnerCredentialUnavailable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses a shell script as the fake binary; skip on Windows")
+	}
+
+	dir := t.TempDir()
+	binaryName := "fixture-pp-cli"
+	writeTestManifestForLiveDogfood(t, dir)
+	writeStubBinary(t, dir, binaryName, `if [ "$1" = "agent-context" ]; then
+  cat <<'JSON'
+{
+  "commands": [
+    {"name":"account","subcommands":[{"name":"show-settings"}]}
+  ]
+}
+JSON
+  exit 0
+fi
+
+if [ "$1" = "account" ] && [ "$2" = "show-settings" ] && [ "${3:-}" = "--help" ]; then
+  cat <<'HELP'
+Show account settings.
+
+Usage:
+  fixture-pp-cli account show-settings [flags]
+
+Examples:
+  fixture-pp-cli account show-settings
+
+Flags:
+      --json    Output JSON
+HELP
+  exit 0
+fi
+
+count_file="count"
+count=0
+if [ -f "$count_file" ]; then
+  count=$(cat "$count_file")
+fi
+count=$((count + 1))
+printf '%s' "$count" > "$count_file"
+echo 'Error: GET /api/v2/account/settings returned HTTP 401: {"error":"Could not authenticate you"}' >&2
+exit 1
+`)
+
+	report, err := RunLiveDogfood(LiveDogfoodOptions{
+		CLIDir:     dir,
+		BinaryName: binaryName,
+		Level:      "quick",
+		Timeout:    5 * time.Second,
+	})
+	require.NoError(t, err)
+
+	happy := findResultByCommandKind(report, "account show-settings", LiveDogfoodTestHappy)
+	require.NotNil(t, happy, "expected account show-settings happy_path result")
+	assert.Equal(t, LiveDogfoodStatusSkip, happy.Status)
+	assert.Equal(t, reasonUnavailableRunnerCredentials, happy.Reason)
+
+	jsonResult := findResultByCommandKind(report, "account show-settings", LiveDogfoodTestJSON)
+	require.NotNil(t, jsonResult, "expected account show-settings json_fidelity result")
+	assert.Equal(t, LiveDogfoodStatusSkip, jsonResult.Status)
+	assert.Equal(t, reasonUnavailableRunnerCredentials, jsonResult.Reason)
+
+	count, err := os.ReadFile(filepath.Join(dir, "count"))
+	require.NoError(t, err)
+	assert.Equal(t, "2", string(count), "persistent auth-shaped 401 should retry once before skip classification")
+}
+
+func TestRunLiveDogfoodProcessPreservesLargeJSONUnderCap(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses a shell script as the fake binary; skip on Windows")
+	}
+
+	dir := t.TempDir()
+	binPath := filepath.Join(dir, "large-json")
+	payloadBytes := liveDogfoodMaxOutputBytes / 5
+	script := `#!/bin/sh
+printf '{"data":"'
+head -c ` + fmt.Sprint(payloadBytes) + ` /dev/zero | tr '\0' 'x'
+printf '"}'
+`
+	require.NoError(t, os.WriteFile(binPath, []byte(script), 0o700))
+
+	run := runLiveDogfoodProcess(binPath, dir, nil, 5*time.Second)
+	require.NoError(t, run.err)
+	assert.False(t, run.stdoutTruncated)
+	assert.True(t, validLiveDogfoodJSONOutput(run.stdout))
+}
+
+func TestRunLiveDogfoodProcessTracksOutputTruncation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses a shell script as the fake binary; skip on Windows")
+	}
+
+	dir := t.TempDir()
+	binPath := filepath.Join(dir, "huge-json")
+	script := fmt.Sprintf(`#!/bin/sh
+printf '{"data":"'
+head -c %d /dev/zero | tr '\0' 'x'
+printf '"}'
+`, liveDogfoodMaxOutputBytes+1024)
+	require.NoError(t, os.WriteFile(binPath, []byte(script), 0o700))
+
+	run := runLiveDogfoodProcess(binPath, dir, nil, 5*time.Second)
+	require.NoError(t, run.err)
+	assert.True(t, run.stdoutTruncated)
+	assert.False(t, validLiveDogfoodJSONOutput(run.stdout))
+	assert.Equal(t, "output exceeded capture cap", liveDogfoodInvalidJSONReason(run, "invalid JSON"))
+}
+
+func TestLiveDogfoodResultRedactsOutputSamplePII(t *testing.T) {
+	run := liveDogfoodRun{
+		stdout:   "{\"name\":\"Jane Doe\"}\n",
+		stderr:   "{\"email\":\"jane@example.com\"}",
+		exitCode: 0,
+	}
+
+	result := liveDogfoodResult("widgets list", LiveDogfoodTestHappy, []string{"widgets", "list"}, run)
+
+	require.NotContains(t, result.OutputSample, "Jane Doe")
+	require.NotContains(t, result.OutputSample, "jane@example.com")
+	require.Contains(t, result.OutputSample, `"name":"<redacted>"`)
+	require.Contains(t, result.OutputSample, `"email":"<redacted>"`)
 }
 
 func TestRunLiveDogfoodErrorPathAcceptsExpectedNonZeroExit(t *testing.T) {
@@ -579,6 +757,7 @@ func TestLiveDogfoodUnavailableForRunnerDoesNotHideNotFound(t *testing.T) {
 
 	assert.True(t, liveDogfoodUnavailableForRunner(liveDogfoodRun{stderr: "HTTP 403 permission denied"}))
 	assert.True(t, liveDogfoodUnavailableForRunner(liveDogfoodRun{stderr: "your credentials are valid but lack access"}))
+	assert.True(t, liveDogfoodUnavailableForRunner(liveDogfoodRun{stderr: `HTTP 401: {"error":"Couldn't authenticate you"}`}))
 	assert.False(t, liveDogfoodUnavailableForRunner(liveDogfoodRun{stderr: "HTTP 404 NotFound"}))
 }
 
@@ -1398,6 +1577,63 @@ fi
 echo "unexpected args: $*" >&2
 exit 99
 `
+	require.NoError(t, os.WriteFile(binPath, []byte(script), 0o755))
+	return dir, binaryName
+}
+
+func writeLiveDogfoodLargeJSONFixture(t *testing.T) (dir string, binaryName string) {
+	t.Helper()
+
+	dir = t.TempDir()
+	binaryName = "fixture-pp-cli"
+	writeTestManifestForLiveDogfood(t, dir)
+
+	binPath := filepath.Join(dir, binaryName)
+	script := fmt.Sprintf(`#!/bin/sh
+set -u
+
+if [ "$1" = "agent-context" ]; then
+  cat <<'JSON'
+{
+  "commands": [
+    {"name":"widgets","subcommands":[{"name":"large"}]}
+  ]
+}
+JSON
+  exit 0
+fi
+
+if [ "$1" = "widgets" ] && [ "$2" = "large" ] && [ "${3:-}" = "--help" ]; then
+  cat <<'HELP'
+Large widgets.
+
+Usage:
+  fixture-pp-cli widgets large [flags]
+
+Examples:
+  fixture-pp-cli widgets large --json
+
+Flags:
+      --json    Output JSON
+HELP
+  exit 0
+fi
+
+if [ "$1" = "widgets" ] && [ "$2" = "large" ]; then
+  if [ "${3:-}" = "--json" ]; then
+    printf '{"id":"first"}\n'
+    printf '{"data":"'
+    head -c %d /dev/zero | tr '\0' 'x'
+    printf '"}\n'
+    exit 0
+  fi
+  echo 'large widgets'
+  exit 0
+fi
+
+echo "unexpected args: $*" >&2
+exit 99
+`, liveDogfoodMaxOutputBytes+1024)
 	require.NoError(t, os.WriteFile(binPath, []byte(script), 0o755))
 	return dir, binaryName
 }

@@ -138,9 +138,9 @@ This CLI was generated with browser-observed traffic context.
 **{{$name}}** — {{$resource.Description}}
 {{range $eName, $endpoint := $resource.Endpoints}}
 {{- if index $.PromotedResourceNames $name}}
-- `{{$.Name}}-pp-cli {{$name}}{{positionalArgs $endpoint}}` — {{oneline $endpoint.Description}}
+- `{{$.Name}}-pp-cli {{kebab $name}}{{positionalArgs $endpoint}}` — {{oneline $endpoint.Description}}
 {{- else}}
-- `{{$.Name}}-pp-cli {{$name}} {{kebab $eName}}` — {{oneline $endpoint.Description}}
+- `{{$.Name}}-pp-cli {{kebab $name}} {{kebab $eName}}` — {{oneline $endpoint.Description}}
 {{- end}}
 {{- end}}
 {{end}}
@@ -307,7 +307,7 @@ When you (or the agent) notice something off about this CLI, record it:
 {{.Name}}-pp-cli feedback list --json --limit 10
 ```
 
-Entries are stored locally at `~/.{{.Name}}-pp-cli/feedback.jsonl`. They are never POSTed unless `{{envName .Name}}_FEEDBACK_ENDPOINT` is set AND either `--send` is passed or `{{envName .Name}}_FEEDBACK_AUTO_SEND=true`. Default behavior is local-only.
+Entries are stored locally at `~/.local/share/{{.Name}}-pp-cli/feedback.jsonl`. They are never POSTed unless `{{envName .Name}}_FEEDBACK_ENDPOINT` is set AND either `--send` is passed or `{{envName .Name}}_FEEDBACK_AUTO_SEND=true`. Default behavior is local-only.
 
 Write what *surprised* you, not a bug report. Short, specific, one line: that is the part that compounds.
 

@@ -24,7 +24,7 @@ The audit emits findings on two surfaces:
 - **Cobra source** (`internal/cli/*.go`) — `empty-short`, `thin-short`, `missing-read-only`. These check shell-out tools the runtime walker registers from Cobra metadata.
 - **Tools manifest** (`tools-manifest.json`) — `empty-mcp-description`, `thin-mcp-description`. These check the descriptions agents actually see for typed endpoint tools, where the source is the OpenAPI spec rather than the Cobra Short.
 
-The audit exempts `pp:endpoint`-annotated commands, parent groupers (no `RunE`), and framework-skipped commands (`auth`, `doctor`, `version`, …) from the Cobra-side checks — those don't become MCP tools the way Cobra Short would describe them.
+The audit exempts `pp:endpoint`-annotated commands, parent groupers (no `RunE`, or the generated `parentNoSubcommandRunE(flags)` sentinel), and framework-skipped commands (`auth`, `doctor`, `version`, …) from the Cobra-side checks — those are not actionable leaf tool descriptions for the Cobra Short audit.
 
 A finding here means the description is mechanically thin enough that there's no chance it's adequate. Fix it. But absence of a finding does NOT mean the description is good — the threshold is a floor, not a ceiling. That's what Pass 2 is for.
 
@@ -371,4 +371,4 @@ After applying fixes, before declaring the polish complete:
 
 The ledger file persists until it ages out (24h). Once the polish PR merges and the CLI is rebuilt, the file is no longer load-bearing — the next `tools-audit` run can start fresh.
 
-If you're polishing a CLI inside a clone of the public library repo (not the internal `~/printing-press/library/`), add `.printing-press-tools-polish.json` to that repo's root `.gitignore` before committing — the ledger is local working state, not part of the published CLI.
+If you're polishing a CLI inside a clone of the public library repo (not the internal `$PRESS_LIBRARY/`), add `.printing-press-tools-polish.json` to that repo's root `.gitignore` before committing — the ledger is local working state, not part of the published CLI.

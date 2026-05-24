@@ -62,7 +62,7 @@ type QuickStartStep struct {
 	Comment string
 }
 
-// Recipe mirrors pipeline.Recipe for SKILL.md template rendering.
+// Recipe mirrors pipeline.Recipe for README/SKILL template rendering.
 type Recipe struct {
 	Title       string
 	Command     string
@@ -166,6 +166,7 @@ type Generator struct {
 }
 
 func New(s *spec.APISpec, outputDir string) *Generator {
+	s.InferEndpointTemplateVarsFromBaseURLs()
 	if s.Owner == "" {
 		s.Owner = resolveOwnerForExisting(outputDir)
 	}
@@ -250,6 +251,8 @@ func New(s *spec.APISpec, outputDir string) *Generator {
 		"effectiveTier":                 effectiveTier,
 		"effectiveSubTier":              effectiveSubTier,
 		"add":                           func(a, b int) int { return a + b },
+		"chomp":                         func(s string) string { return strings.TrimRight(s, "\r\n") },
+		"staleAfterExpr":                staleAfterExpr,
 		"oneline":                       naming.OneLine,
 		"composeMCPDesc":                composeMCPDesc,
 		"composeMCPSubDesc":             composeMCPSubDesc,
@@ -622,53 +625,38 @@ func buildWhichFallbackEntries(resources map[string]spec.Resource) []NovelFeatur
 
 // HelperFlags controls which helper functions are emitted in helpers.go.
 type HelperFlags struct {
-	HasDelete          bool // spec has DELETE endpoints → emit classifyDeleteError
-	HasPathParams      bool // spec has path parameters → emit replacePathParam
-	HasMultiPositional bool // spec has endpoints with 2+ positional params → emit usageErr
-	HasDataLayer       bool // CLI has a local store (sync/search) → emit provenance helpers
-	HasSyncHelpers     bool // generated sync implementation calls sync-only helpers
-	HasClientLimit     bool // at least one endpoint needs client-side limit truncation → emit truncateJSONArray
-	HasEmbeddedPaged   bool // at least one GET endpoint has detected embedded paged sub-resources → emit fetchEmbeddedPagedSubresource
-	HasResponseUnwrap  bool // at least one generated command can call extractResponseData
+	HasDelete            bool // spec has DELETE endpoints → emit classifyDeleteError
+	HasPathParams        bool // spec has path parameters → emit replacePathParam
+	HasMultiPositional   bool // spec has endpoints with 2+ positional params → emit usageErr
+	HasDataLayer         bool // CLI has a local store (sync/search) → emit provenance helpers
+	HasSyncHelpers       bool // generated sync implementation calls sync-only helpers
+	HasClientLimit       bool // at least one endpoint needs client-side limit truncation → emit truncateJSONArray
+	HasEmbeddedPaged     bool // at least one GET endpoint has detected embedded paged sub-resources → emit fetchEmbeddedPagedSubresource
+	HasResponseUnwrap    bool // at least one generated command can call extractResponseData
+	HasMutationEndpoints bool // spec has any non-GET/HEAD endpoint → emit partial-failure helpers + --allow-partial-failure flag
 }
 
 // computeHelperFlags scans the spec's resources to determine which helpers are needed.
 func computeHelperFlags(s *spec.APISpec) HelperFlags {
 	var flags HelperFlags
 	for _, r := range s.Resources {
-		for _, e := range r.Endpoints {
-			if strings.EqualFold(e.Method, "DELETE") {
-				flags.HasDelete = true
-			}
-			if endpointNeedsClientLimit(e) {
-				flags.HasClientLimit = true
-			}
-			if len(e.EmbeddedPagedSubresources) > 0 {
-				flags.HasEmbeddedPaged = true
-			}
-			positionalCount := 0
-			for _, p := range e.Params {
-				if p.Positional || p.PathParam {
-					flags.HasPathParams = true
-				}
-				if p.Positional {
-					positionalCount++
-				}
-			}
-			if positionalCount >= 2 {
-				flags.HasMultiPositional = true
-			}
-		}
-		for _, sub := range r.SubResources {
-			for _, e := range sub.Endpoints {
+		var scan func(spec.Resource)
+		scan = func(resource spec.Resource) {
+			for _, e := range resource.Endpoints {
 				if strings.EqualFold(e.Method, "DELETE") {
 					flags.HasDelete = true
+				}
+				if isMutationMethod(e.Method) {
+					flags.HasMutationEndpoints = true
 				}
 				if endpointNeedsClientLimit(e) {
 					flags.HasClientLimit = true
 				}
 				if len(e.EmbeddedPagedSubresources) > 0 {
 					flags.HasEmbeddedPaged = true
+				}
+				if strings.Contains(e.Path, "{") {
+					flags.HasPathParams = true
 				}
 				positionalCount := 0
 				for _, p := range e.Params {
@@ -683,9 +671,27 @@ func computeHelperFlags(s *spec.APISpec) HelperFlags {
 					flags.HasMultiPositional = true
 				}
 			}
+			for _, sub := range resource.SubResources {
+				scan(sub)
+			}
 		}
+		scan(r)
 	}
 	return flags
+}
+
+// isMutationMethod reports whether method is a mutation verb that reaches the
+// partial-failure detection call sites in command_endpoint.go.tmpl. The
+// template emits those call sites for every non-GET/HEAD endpoint, so the
+// predicate must match the same shape — otherwise a DELETE-only CLI would
+// reference undefined detectPartialFailure / partialFailureReport symbols.
+// Detection itself is a no-op for DELETE bodies in practice; the cost is one
+// dead function on truly-DELETE-only CLIs.
+func isMutationMethod(method string) bool {
+	if method == "" {
+		return false
+	}
+	return !strings.EqualFold(method, "GET") && !strings.EqualFold(method, "HEAD")
 }
 
 // helpersTemplateData wraps APISpec with flags controlling conditional helper emission.
@@ -906,19 +912,10 @@ func (g *Generator) skillDescription() string {
 	}
 }
 
-// freshnessCommandPaths returns the rendered slice of "covered command paths"
-// surfaced in user-facing docs (README.md and SKILL.md) for the freshness
-// section. The slice contains only paths whose subcommands actually exist in
-// the generated CLI — promoted single-endpoint resources emit only the bare
-// `<cli> <resource>` form, multi-endpoint resources emit the bare form plus
-// one entry per real endpoint name.
-//
-// The runtime fallback map in `internal/cli/auto_refresh.go` (rendered by
-// auto_refresh.go.tmpl) keeps its `<resource> list/get/search` no-op
-// variants because Cobra's argument resolution can land on any of them at
-// runtime — having the map accept those forms keeps freshness lookups
-// loose. Only the slice rendered into docs needs trimming, so users and
-// agents don't see phantom subcommands they can't actually invoke.
+// freshnessCommandPaths returns the command paths surfaced in README.md and
+// SKILL.md freshness sections. Keep this in lockstep with
+// auto_refresh.go.tmpl's readCommandResources map so the docs describe the
+// exact command paths that can trigger auto-refresh at runtime.
 func (g *Generator) freshnessCommandPaths() []string {
 	if !g.Spec.Cache.Enabled || g.shouldEmitHTMLSyncStub() || g.profile == nil {
 		return nil
@@ -935,28 +932,9 @@ func (g *Generator) freshnessCommandPaths() []string {
 	cliName := naming.CLI(g.Spec.Name)
 	for _, resource := range g.profile.SyncableResources {
 		prefix := cliName + " " + resource.Name
-		// Always emit the bare `<cli> <resource>` form. For promoted
-		// single-endpoint resources Cobra resolves this to the leaf
-		// command; for multi-endpoint resources it resolves to the
-		// parent help. Both are real, reachable paths.
 		add(prefix)
-
-		// Promoted resources have only one underlying endpoint and it
-		// is wired directly to the bare command — emitting endpoint
-		// names would create phantom paths users can't invoke.
-		if g.PromotedResourceNames[resource.Name] {
-			continue
-		}
-
-		// For multi-endpoint resources, emit one entry per real endpoint
-		// name. The endpoint map key matches the generated subcommand
-		// name (e.g., a `top` endpoint becomes `<cli> stories top`).
-		specResource, ok := g.Spec.Resources[resource.Name]
-		if !ok {
-			continue
-		}
-		for endpointName := range specResource.Endpoints {
-			add(prefix + " " + endpointName)
+		for _, subcommand := range []string{"list", "get", "search"} {
+			add(prefix + " " + subcommand)
 		}
 	}
 	for _, command := range g.Spec.Cache.Commands {
@@ -1562,6 +1540,10 @@ func (g *Generator) renderSingleFiles() error {
 		"cliutil_extractnumber_test.go.tmpl":       filepath.Join("internal", "cliutil", "extractnumber_test.go"),
 		"cliutil_jwtshape.go.tmpl":                 filepath.Join("internal", "cliutil", "jwtshape.go"),
 		"cliutil_jwtshape_test.go.tmpl":            filepath.Join("internal", "cliutil", "jwtshape_test.go"),
+		"cliutil_duration.go.tmpl":                 filepath.Join("internal", "cliutil", "duration.go"),
+		"cliutil_duration_test.go.tmpl":            filepath.Join("internal", "cliutil", "duration_test.go"),
+		"cliutil_odata_date.go.tmpl":               filepath.Join("internal", "cliutil", "odata_date.go"),
+		"cliutil_odata_date_test.go.tmpl":          filepath.Join("internal", "cliutil", "odata_date_test.go"),
 		"cliutil_test.go.tmpl":                     filepath.Join("internal", "cliutil", "cliutil_test.go"),
 		"cobratree/walker.go.tmpl":                 filepath.Join("internal", "mcp", "cobratree", "walker.go"),
 		"cobratree/classify.go.tmpl":               filepath.Join("internal", "mcp", "cobratree", "classify.go"),
@@ -3212,6 +3194,7 @@ func (g *Generator) renderRootProjectFiles(promotedCommands []PromotedCommand, p
 		AsyncJobCount         int
 		HasAuthCommand        bool
 		HasDelete             bool
+		HasMutationEndpoints  bool
 		HasAutoRefresh        bool
 		CompactDescription    string
 	}{
@@ -3229,6 +3212,7 @@ func (g *Generator) renderRootProjectFiles(promotedCommands []PromotedCommand, p
 		AsyncJobCount:         len(g.AsyncJobs),
 		HasAuthCommand:        hasAuthCommand,
 		HasDelete:             helperFlags.HasDelete,
+		HasMutationEndpoints:  helperFlags.HasMutationEndpoints,
 		HasAutoRefresh:        g.hasAutoRefresh(),
 		CompactDescription:    g.compactDescription(),
 	}
@@ -4917,10 +4901,15 @@ func exampleValue(p spec.Param) string {
 	if strings.Contains(nameLower, "name") || strings.Contains(nameLower, "title") {
 		return "example-resource"
 	}
-	if strings.Contains(nameLower, "date") || p.Format == "date" {
+	// Reuse isNumericOrBool (defined above): a numeric- or boolean-typed
+	// param must not pick up an RFC3339/date example from a "time"/"date"
+	// substring in its name (epoch cursors like start_time, oldest), while
+	// Format == date/date-time stays authoritative for genuinely temporal
+	// string params.
+	if p.Format == "date" || (!isNumericOrBool && strings.Contains(nameLower, "date")) {
 		return "2026-01-15"
 	}
-	if strings.Contains(nameLower, "time") || p.Format == "date-time" {
+	if p.Format == "date-time" || (!isNumericOrBool && strings.Contains(nameLower, "time")) {
 		return "2026-01-15T09:00:00Z"
 	}
 	if strings.Contains(nameLower, "token") || strings.Contains(nameLower, "key") {
@@ -5229,6 +5218,44 @@ var goKeywords = map[string]bool{
 // isGoKeyword reports whether s is a reserved word in the Go language spec.
 func isGoKeyword(s string) bool {
 	return goKeywords[s]
+}
+
+// cacheDurationDefault is the global stale-after fallback used when the spec
+// declares no stale_after, or declares one that does not parse.
+const cacheDurationDefault = "6 * time.Hour"
+
+// staleAfterExpr renders the cache stale-after duration as a Go expression for
+// direct initialization. A spec literal that parses to a non-negative duration
+// becomes e.g. "168 * time.Hour"; an empty, unparseable, or negative value
+// falls back to the 6h default (a negative stale-after would make the cache
+// permanently stale). Emitting the value directly avoids a dead "staleAfter :=
+// 6 * time.Hour" initializer that is always overwritten by a ParseDuration call
+// which cannot fail on a constant literal.
+func staleAfterExpr(lit string) string {
+	if lit == "" {
+		return cacheDurationDefault
+	}
+	d, err := time.ParseDuration(lit)
+	if err != nil || d < 0 {
+		return cacheDurationDefault
+	}
+	return goDurationExpr(d)
+}
+
+// goDurationExpr renders a time.Duration as a readable Go expression, preferring
+// the largest whole unit (hours, then minutes, then seconds) and falling back
+// to a nanosecond-typed literal for sub-second or non-round values.
+func goDurationExpr(d time.Duration) string {
+	switch {
+	case d%time.Hour == 0:
+		return fmt.Sprintf("%d * time.Hour", d/time.Hour)
+	case d%time.Minute == 0:
+		return fmt.Sprintf("%d * time.Minute", d/time.Minute)
+	case d%time.Second == 0:
+		return fmt.Sprintf("%d * time.Second", d/time.Second)
+	default:
+		return fmt.Sprintf("time.Duration(%d)", int64(d))
+	}
 }
 
 // toKebab converts PascalCase, camelCase, or mixed names to kebab-case.

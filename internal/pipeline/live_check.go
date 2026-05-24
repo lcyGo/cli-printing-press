@@ -16,7 +16,9 @@ import (
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
+	"github.com/mvanhorn/cli-printing-press/v4/internal/artifacts"
 	"github.com/mvanhorn/cli-printing-press/v4/internal/platform"
 	"github.com/mvanhorn/cli-printing-press/v4/internal/shellargs"
 )
@@ -39,6 +41,9 @@ const (
 	// Relevance matching only needs a few hundred bytes; a 1 MiB cap keeps a
 	// misbehaving feature from exhausting the scorecard process's memory.
 	MaxOutputBytes = 1 << 20
+	// MaxErrorOutputBytes keeps diagnostic stderr captures bounded separately
+	// from stdout.
+	MaxErrorOutputBytes = 1 << 20
 )
 
 // LiveCheckResult summarizes a live-behavior sampling of a printed CLI's
@@ -106,11 +111,15 @@ type LiveCheckBinaryRefresh struct {
 }
 
 // outputSampleMaxBytes caps the captured-output snapshot stored on each
-// LiveFeatureResult. The raw capture buffer allows up to MaxOutputBytes
-// (1 MiB) but the serialized sample is bounded much tighter so scorecard
-// JSON files stay readable and agentic reviewers don't blow through their
-// context window on one feature's output.
+// LiveFeatureResult. The raw capture buffer allows up to MaxOutputBytes but
+// the serialized sample is bounded much tighter so scorecard JSON files stay
+// readable and agentic reviewers don't blow through their context window on
+// one feature's output.
 const outputSampleMaxBytes = 4096
+
+// sampleRedactionLookaheadBytes lets the redactor see short PII spans that
+// start just before the persisted sample cap and end just after it.
+const sampleRedactionLookaheadBytes = 512
 
 // LiveCheckOptions bundles the optional knobs for RunLiveCheck. CLIDir is
 // required; every other field has a sensible zero-value default.
@@ -657,7 +666,7 @@ func runOneFeatureCheck(cliDir, binaryPath string, f NovelFeature, timeout time.
 	stdoutCap := &bytes.Buffer{}
 	stderrCap := &bytes.Buffer{}
 	cmd.Stdout = &limitedWriter{w: stdoutCap, remaining: MaxOutputBytes}
-	cmd.Stderr = &limitedWriter{w: stderrCap, remaining: MaxOutputBytes}
+	cmd.Stderr = &limitedWriter{w: stderrCap, remaining: MaxErrorOutputBytes}
 	runErr := cmd.Run()
 	if ctx.Err() == context.DeadlineExceeded {
 		return fail(fmt.Sprintf("timed out after %s", timeout))
@@ -704,14 +713,79 @@ func runOneFeatureCheck(cliDir, binaryPath string, f NovelFeature, timeout time.
 	return result
 }
 
-// sampleOutput truncates captured stdout to outputSampleMaxBytes for
+// sampleOutput truncates captured output to outputSampleMaxBytes for
 // persistence on LiveFeatureResult.OutputSample. An ellipsis marker at the
 // boundary tells downstream readers the snapshot is truncated.
 func sampleOutput(s string) string {
-	if len(s) <= outputSampleMaxBytes {
+	return sampleOutputParts(s)
+}
+
+func sampleOutputParts(parts ...string) string {
+	var rawSample strings.Builder
+	captureRemaining := outputSampleMaxBytes + sampleRedactionLookaheadBytes
+	capRemaining := outputSampleMaxBytes
+	truncated := false
+	for _, part := range parts {
+		if redacted, ok := artifacts.RedactPIIJSONKeys(part); ok {
+			part = redacted
+		}
+		if len(part) > capRemaining {
+			truncated = true
+		}
+		if capRemaining > 0 {
+			if len(part) >= capRemaining {
+				capRemaining = 0
+			} else {
+				capRemaining -= len(part)
+			}
+		}
+		if captureRemaining <= 0 {
+			continue
+		}
+		if len(part) > captureRemaining {
+			rawSample.WriteString(truncateUTF8(part, captureRemaining))
+			captureRemaining = 0
+			continue
+		}
+		rawSample.WriteString(part)
+		captureRemaining -= len(part)
+	}
+	sample := artifacts.RedactPIIText(rawSample.String())
+	if len(sample) > outputSampleMaxBytes {
+		sample = truncateUTF8(sample, outputSampleMaxBytes)
+		sample = completePartialRedactionSentinel(sample)
+		truncated = true
+	}
+	if truncated {
+		return sample + "…[truncated]"
+	}
+	return sample
+}
+
+func completePartialRedactionSentinel(sample string) string {
+	const partialSentinelPrefix = "<redact"
+	idx := strings.LastIndex(sample, partialSentinelPrefix)
+	if idx == -1 || strings.Contains(sample[idx:], artifacts.PIIRedactedSentinel) {
+		return sample
+	}
+	return sample[:idx] + artifacts.PIIRedactedSentinel
+}
+
+func truncateUTF8(s string, maxBytes int) string {
+	if maxBytes <= 0 {
+		return ""
+	}
+	if len(s) <= maxBytes {
 		return s
 	}
-	return s[:outputSampleMaxBytes] + "…[truncated]"
+	for maxBytes > 0 {
+		r, size := utf8.DecodeLastRuneInString(s[:maxBytes])
+		if r != utf8.RuneError || size != 1 {
+			break
+		}
+		maxBytes--
+	}
+	return s[:maxBytes]
 }
 
 // rawHTMLEntityRe matches numeric HTML character references, both decimal
@@ -775,10 +849,14 @@ func detectRawHTMLEntities(output string, args []string) string {
 type limitedWriter struct {
 	w         io.Writer
 	remaining int
+	truncated bool
 }
 
 func (lw *limitedWriter) Write(p []byte) (int, error) {
 	if lw.remaining <= 0 {
+		if len(p) > 0 {
+			lw.truncated = true
+		}
 		return len(p), nil
 	}
 	n := min(len(p), lw.remaining)
@@ -786,6 +864,9 @@ func (lw *limitedWriter) Write(p []byte) (int, error) {
 		return 0, err
 	}
 	lw.remaining -= n
+	if n < len(p) {
+		lw.truncated = true
+	}
 	return len(p), nil
 }
 
@@ -941,9 +1022,9 @@ func normalizedOutputWords(s string) []string {
 }
 
 func trimOutput(s string) string {
-	s = strings.TrimSpace(s)
+	s = artifacts.RedactPIIText(strings.TrimSpace(s))
 	if len(s) > 300 {
-		s = s[:300] + "..."
+		s = truncateUTF8(s, 300) + "..."
 	}
 	return s
 }

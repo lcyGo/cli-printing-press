@@ -50,6 +50,7 @@ const reasonNoErrorPathProbeAnnotation = "no-error-path-probe annotation"
 // honor a smaller --limit) so the matrix's per-command timeout
 // doesn't kill an otherwise healthy run.
 const dogfoodEnvVar = "PRINTING_PRESS_DOGFOOD"
+const liveDogfoodAuthRetryDelay = time.Second
 
 type LiveDogfoodOptions struct {
 	CLIDir              string
@@ -95,10 +96,11 @@ type liveDogfoodCommand struct {
 }
 
 type liveDogfoodRun struct {
-	stdout   string
-	stderr   string
-	exitCode int
-	err      error
+	stdout          string
+	stderr          string
+	stdoutTruncated bool
+	exitCode        int
+	err             error
 }
 
 func RunLiveDogfood(opts LiveDogfoodOptions) (*LiveDogfoodReport, error) {
@@ -727,14 +729,16 @@ func runLiveDogfoodCommand(command liveDogfoodCommand, ctx resolveCtx) []LiveDog
 		}
 		results = append(results, happyResult)
 
-		if commandSupportsJSON(command.Help) {
+		if happyResult.Status == LiveDogfoodStatusSkip && happyResult.Reason == reasonUnavailableRunnerCredentials {
+			results = append(results, skippedLiveDogfoodResult(commandName, LiveDogfoodTestJSON, reasonUnavailableRunnerCredentials))
+		} else if commandSupportsJSON(command.Help) {
 			jsonArgs := appendJSONArg(runArgs)
 			jsonRun := runLiveDogfoodProcess(ctx.binaryPath, ctx.cliDir, jsonArgs, ctx.timeout)
 			jsonResult := liveDogfoodResult(commandName, LiveDogfoodTestJSON, jsonArgs, jsonRun)
 			if jsonRun.exitCode == 0 {
-				if !validLiveDogfoodJSONOutput(jsonRun.stdout) {
+				if jsonRun.stdoutTruncated || !validLiveDogfoodJSONOutput(jsonRun.stdout) {
 					jsonResult.Status = LiveDogfoodStatusFail
-					jsonResult.Reason = "invalid JSON"
+					jsonResult.Reason = liveDogfoodInvalidJSONReason(jsonRun, "invalid JSON")
 				} else {
 					jsonResult.Status = LiveDogfoodStatusPass
 					jsonResult.Reason = ""
@@ -795,9 +799,12 @@ func runLiveDogfoodCommand(command liveDogfoodCommand, ctx resolveCtx) []LiveDog
 				case errorRun.exitCode != 0:
 					errorResult.Status = LiveDogfoodStatusPass
 					errorResult.Reason = ""
+				case suppliedJSON && errorRun.stdoutTruncated:
+					errorResult.Status = LiveDogfoodStatusFail
+					errorResult.Reason = liveDogfoodInvalidJSONReason(errorRun, "invalid JSON under --json")
 				case suppliedJSON && !json.Valid([]byte(errorRun.stdout)):
 					errorResult.Status = LiveDogfoodStatusFail
-					errorResult.Reason = "invalid JSON under --json"
+					errorResult.Reason = liveDogfoodInvalidJSONReason(errorRun, "invalid JSON under --json")
 				default:
 					errorResult.Status = LiveDogfoodStatusPass
 					errorResult.Reason = ""
@@ -870,6 +877,20 @@ func extractFlagsSection(help string) string {
 }
 
 func runLiveDogfoodProcess(binaryPath, cliDir string, args []string, timeout time.Duration) liveDogfoodRun {
+	deadline := time.Now().Add(timeout)
+	run := runLiveDogfoodProcessOnce(binaryPath, cliDir, args, timeout)
+	if !liveDogfoodRetryableAuth401(run) || time.Until(deadline) <= liveDogfoodAuthRetryDelay {
+		return run
+	}
+	time.Sleep(liveDogfoodAuthRetryDelay)
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		return run
+	}
+	return runLiveDogfoodProcessOnce(binaryPath, cliDir, args, remaining)
+}
+
+func runLiveDogfoodProcessOnce(binaryPath, cliDir string, args []string, timeout time.Duration) liveDogfoodRun {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
@@ -884,15 +905,18 @@ func runLiveDogfoodProcess(binaryPath, cliDir string, args []string, timeout tim
 	cmd.Env = append(cmd.Env, dogfoodEnvVar+"=1")
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	cmd.Stdout = &limitedWriter{w: stdout, remaining: MaxOutputBytes}
-	cmd.Stderr = &limitedWriter{w: stderr, remaining: MaxOutputBytes}
+	stdoutCap := &limitedWriter{w: stdout, remaining: liveDogfoodMaxOutputBytes}
+	stderrCap := &limitedWriter{w: stderr, remaining: MaxErrorOutputBytes}
+	cmd.Stdout = stdoutCap
+	cmd.Stderr = stderrCap
 
 	err := cmd.Run()
 	result := liveDogfoodRun{
-		stdout:   stdout.String(),
-		stderr:   stderr.String(),
-		exitCode: 0,
-		err:      err,
+		stdout:          stdout.String(),
+		stderr:          stderr.String(),
+		stdoutTruncated: stdoutCap.truncated,
+		exitCode:        0,
+		err:             err,
 	}
 	if ctx.Err() == context.DeadlineExceeded {
 		result.exitCode = -1
@@ -910,6 +934,20 @@ func runLiveDogfoodProcess(binaryPath, cliDir string, args []string, timeout tim
 	return result
 }
 
+func liveDogfoodRetryableAuth401(run liveDogfoodRun) bool {
+	if run.exitCode == 0 {
+		return false
+	}
+	return liveDogfoodAuth401(run)
+}
+
+func liveDogfoodInvalidJSONReason(run liveDogfoodRun, fallback string) string {
+	if run.stdoutTruncated {
+		return "output exceeded capture cap"
+	}
+	return fallback
+}
+
 func liveDogfoodResult(command string, kind LiveDogfoodTestKind, args []string, run liveDogfoodRun) LiveDogfoodTestResult {
 	result := LiveDogfoodTestResult{
 		Command:      command,
@@ -917,7 +955,7 @@ func liveDogfoodResult(command string, kind LiveDogfoodTestKind, args []string, 
 		Args:         append([]string{}, args...),
 		Status:       LiveDogfoodStatusFail,
 		ExitCode:     run.exitCode,
-		OutputSample: sampleOutput(run.stdout + run.stderr),
+		OutputSample: sampleOutputParts(run.stdout, run.stderr),
 	}
 	if run.exitCode != 0 {
 		result.Reason = fmt.Sprintf("exit %d", run.exitCode)
@@ -954,6 +992,7 @@ const (
 	mcpReadOnlyAnnotation      = "mcp:read-only"
 	destructiveAuthAnnotation  = "pp:destructive-auth"
 	noErrorPathProbeAnnotation = "pp:no-error-path-probe"
+	liveDogfoodMaxOutputBytes  = 10 << 20
 )
 
 // destructiveAuthTerms are case-insensitive command or endpoint tokens
@@ -1126,8 +1165,22 @@ func validLiveDogfoodJSONOutput(stdout string) bool {
 func liveDogfoodUnavailableForRunner(run liveDogfoodRun) bool {
 	output := strings.ToLower(run.stdout + run.stderr)
 	return strings.Contains(output, "http 403") ||
+		liveDogfoodAuth401Output(output) ||
 		strings.Contains(output, "permission denied") ||
 		strings.Contains(output, "your credentials are valid but lack access")
+}
+
+func liveDogfoodAuth401(run liveDogfoodRun) bool {
+	return liveDogfoodAuth401Output(strings.ToLower(run.stdout + run.stderr))
+}
+
+func liveDogfoodAuth401Output(output string) bool {
+	if !strings.Contains(output, "http 401") {
+		return false
+	}
+	return strings.Contains(output, "couldn't authenticate") ||
+		strings.Contains(output, "could not authenticate") ||
+		strings.Contains(output, "not authenticated")
 }
 
 func commandSupportsDryRun(help string) bool {

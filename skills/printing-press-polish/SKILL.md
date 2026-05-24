@@ -5,7 +5,7 @@ description: >
   diagnostics (dogfood, verify, scorecard, go vet), automatically fixes all
   issues (verify failures, dead code, descriptions, README, MCP tool quality),
   reports the before/after delta, and offers to publish. Use after any
-  /printing-press run, or on any CLI in ~/printing-press/library/. Trigger
+  /printing-press run, or on any CLI in $PRESS_LIBRARY/. Trigger
   phrases: "polish", "improve the CLI", "fix verify", "make it publish-ready",
   "clean up the CLI", "get this ready to ship".
 context: fork
@@ -29,7 +29,7 @@ The retro improves the Printing Press. Polish improves the generated CLI. This s
 ```bash
 /printing-press-polish redfin
 /printing-press-polish redfin-pp-cli
-/printing-press-polish ~/printing-press/library/redfin
+/printing-press-polish "$PRESS_LIBRARY/redfin"
 ```
 
 ## When to run
@@ -40,14 +40,14 @@ After any `/printing-press` generation, especially when:
 - The scorecard is below 85
 - You want the CLI publish-ready in one pass
 
-Can also be run standalone on any CLI in `~/printing-press/library/`.
+Can also be run standalone on any CLI in `$PRESS_LIBRARY/`.
 
 ## Setup
 
 ```bash
 # min-binary-version: 4.0.0
 
-PRESS_HOME="$HOME/printing-press"
+PRESS_HOME="${PRINTING_PRESS_HOME:-$HOME/printing-press}"
 PRESS_LIBRARY="$PRESS_HOME/library"
 
 if ! command -v cli-printing-press >/dev/null 2>&1; then
@@ -82,7 +82,7 @@ The argument string can contain a `--standalone` flag plus one positional value 
 The positional value can be:
 - A short name: `redfin` (looks up `$PRESS_LIBRARY/redfin`)
 - A full name: `redfin-pp-cli` (strips suffix, looks up `$PRESS_LIBRARY/redfin`)
-- A path: `~/printing-press/library/redfin` (used directly)
+- A path: `$PRESS_LIBRARY/redfin` (used directly)
 
 Resolution order for the positional value:
 1. If it is an absolute or `~`-prefixed path and exists, use it
@@ -94,7 +94,7 @@ Resolution order for the positional value:
 
 - **Standalone (user-invoked, `/printing-press-polish redfin`).** Invoked via the slash command. Treat as `STANDALONE_MODE=true` unconditionally — the slash-command form is the publish-intent surface, even when the user omits the flag. The arg is a slug or binary name; resolution lands on `$PRESS_LIBRARY/<slug>/`. This is the published copy and the right target.
 - **Mid-pipeline (main printing-press skill Phase 5.5, hold-path "Polish to retry").** Invoked via the Skill tool with `args: "$CLI_WORK_DIR"`. The arg is an absolute path to `~/printing-press/.runstate/.../runs/.../working/<api>-pp-cli/`; resolution must hit rule 1. `STANDALONE_MODE=false` by default — main SKILL owns the publish flow on this path, so polish defers. **Do not paraphrase the arg to the slug** — Phase 5.5 fires before the working CLI is promoted, so `$PRESS_LIBRARY/<slug>/` either doesn't exist or holds the *prior* run's stale CLI.
-- **Skill-tool standalone override.** A non-slash caller that genuinely wants polish to publish must opt in explicitly by including `--standalone` in `args` (e.g., `args: "--standalone ~/printing-press/library/redfin"`). Without that token, polish never publishes from a Skill-tool invocation — even if the resolved path happens to live under `$PRESS_LIBRARY/`. The flag is the contract; the path is not.
+- **Skill-tool standalone override.** A non-slash caller that genuinely wants polish to publish must opt in explicitly by including `--standalone` in `args` (e.g., `args: "--standalone $PRESS_LIBRARY/redfin"`). Without that token, polish never publishes from a Skill-tool invocation — even if the resolved path happens to live under `$PRESS_LIBRARY/`. The flag is the contract; the path is not.
 
 This caller-mode-driven gate replaces the older path-substring heuristic (`*.runstate/*`). The heuristic broke when the main SKILL's Phase 5.5/5.6 ordering inverted, or when polish was invoked from a non-`.runstate` scratch layout: polish would see a `$PRESS_LIBRARY/<slug>/` path, conclude "standalone," and fire its Publish Offer (fork, global git config, public PR) inside a mid-pipeline run. The flag is unambiguous and the safer default is no-publish.
 
@@ -170,6 +170,15 @@ fi
 #  2. Post-promote (standalone polish): research.json lives at
 #     manuscripts/<api>/<run-id>/research.json.
 RESEARCH_DIR=""
+MANIFEST_RUN_ID=""
+if [ -f "$CLI_DIR/.printing-press.json" ]; then
+  if command -v jq >/dev/null 2>&1; then
+    MANIFEST_RUN_ID="$(jq -r '.run_id // empty' "$CLI_DIR/.printing-press.json" 2>/dev/null || true)"
+  fi
+  if [ -z "$MANIFEST_RUN_ID" ]; then
+    MANIFEST_RUN_ID="$(sed -nE 's/.*"run_id"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$CLI_DIR/.printing-press.json" | head -1)"
+  fi
+fi
 case "$CLI_DIR" in
   *.runstate/*)
     _grandparent="$(dirname "$(dirname "$CLI_DIR")")"
@@ -178,12 +187,27 @@ case "$CLI_DIR" in
     fi
     ;;
   *)
-    for d in "$PRESS_HOME/manuscripts/$API_SLUG"/*/research.json "$PRESS_HOME/manuscripts/$CLI_NAME"/*/research.json; do
-      if [ -f "$d" ]; then
-        RESEARCH_DIR="$(dirname "$d")"
-        break
-      fi
-    done
+    if [ -n "$MANIFEST_RUN_ID" ]; then
+      for base in "$PRESS_HOME/manuscripts/$API_SLUG" "$PRESS_HOME/manuscripts/$CLI_NAME"; do
+        if [ -f "$base/$MANIFEST_RUN_ID/research.json" ]; then
+          RESEARCH_DIR="$base/$MANIFEST_RUN_ID"
+          break
+        fi
+      done
+    fi
+    # Match publish package's fallback: API slug first, then CLI name, each
+    # using the lexicographically latest run id when the manifest has none.
+    if [ -z "$RESEARCH_DIR" ]; then
+      for base in "$PRESS_HOME/manuscripts/$API_SLUG" "$PRESS_HOME/manuscripts/$CLI_NAME"; do
+        if [ -d "$base" ]; then
+          _latest="$(find "$base" -mindepth 2 -maxdepth 2 -name research.json -type f 2>/dev/null | sort | tail -1)"
+          if [ -n "$_latest" ]; then
+            RESEARCH_DIR="$(dirname "$_latest")"
+            break
+          fi
+        fi
+      done
+    fi
     ;;
 esac
 
@@ -192,6 +216,15 @@ esac
 RESEARCH_ARGS=()
 if [ -n "$RESEARCH_DIR" ]; then
   RESEARCH_ARGS=(--research-dir "$RESEARCH_DIR")
+fi
+
+# pii-audit runs against the CLI dir, but publish package later copies the
+# same run archive under .manuscripts/<run-id> before enforcing the PII gate.
+# Pass the run dir here so polish sees the narrative manuscript files with
+# the same relative paths publish will scan.
+PII_ARGS=()
+if [ -n "$RESEARCH_DIR" ]; then
+  PII_ARGS=(--manuscripts-dir "$RESEARCH_DIR")
 fi
 ```
 
@@ -268,7 +301,7 @@ fi
 cli-printing-press scorecard --dir "$CLI_DIR" $SPEC_FLAG "${RESEARCH_ARGS[@]}" --live-check --json > /tmp/polish-scorecard.json 2>&1 || true
 cli-printing-press scorecard --dir "$CLI_DIR" $SPEC_FLAG 2>&1
 cli-printing-press tools-audit "$CLI_DIR" --json > /tmp/polish-tools-audit-before.json 2>&1 || true
-cli-printing-press pii-audit "$CLI_DIR" --json > /tmp/polish-pii-audit-before.json 2>&1 || true
+cli-printing-press pii-audit "$CLI_DIR" "${PII_ARGS[@]}" --json > /tmp/polish-pii-audit-before.json 2>&1 || true
 go vet ./... 2>&1
 ```
 
@@ -419,7 +452,7 @@ sections, expect the next dogfood resync or regeneration to clobber the change.
 To find the manuscript source:
 
 ```bash
-PRESS_HOME="$HOME/printing-press"
+PRESS_HOME="${PRINTING_PRESS_HOME:-$HOME/printing-press}"
 API_SLUG="${CLI_NAME%-pp-cli}"
 RESEARCH_JSON=""
 for f in "$PRESS_HOME/manuscripts/$CLI_NAME"/*/research.json \
@@ -515,7 +548,7 @@ Proceed to "After all fixes" only when the audit's summary line reads `no pendin
 
 Stop and:
 
-1. Run `cli-printing-press pii-audit "$CLI_DIR"` to surface pending findings (or read `/tmp/polish-pii-audit-before.json` from Phase 1's baseline).
+1. Run `cli-printing-press pii-audit "$CLI_DIR" "${PII_ARGS[@]}"` to surface pending findings (or read `/tmp/polish-pii-audit-before.json` from Phase 1's baseline). When `RESEARCH_DIR` exists, this includes that run's `research.json` and `research/*.md` with `.manuscripts/<run-id>/...` paths so accepts carry forward into `publish package`.
 2. You must read `references/pii-polish.md` and follow its per-finding decision tree — fix real values in source with non-matching placeholders, or accept with the `category` + `evidence_context` pre-decision fields.
 3. **Accepting PII findings carries a strict contract.** Missing fields, 6+ accepts sharing a rationale, or wholesale-accepting ≥10 findings without source fixes all fail the gate. See `references/pii-polish.md` "The accept contract" and "Forbidden accept patterns" for the full rules.
 
@@ -546,7 +579,7 @@ if [ "$STANDALONE_MODE" = "true" ]; then
 fi
 cli-printing-press scorecard --dir "$CLI_DIR" $SPEC_FLAG 2>&1
 cli-printing-press tools-audit "$CLI_DIR" 2>&1
-cli-printing-press pii-audit "$CLI_DIR" 2>&1
+cli-printing-press pii-audit "$CLI_DIR" "${PII_ARGS[@]}" 2>&1
 go vet ./... 2>&1
 ```
 
@@ -718,7 +751,7 @@ Present via `AskUserQuestion`. Two example shapes:
 > Recommendation: Publish.
 >
 > 1. **Publish now** (recommended) — validate, package, and open a PR
-> 2. **Done for now** — CLI is at ~/printing-press/library/<cli-name>"
+> 2. **Done for now** — CLI is at $PRESS_LIBRARY/<cli-name>"
 
 **Polish thinks another pass would help** (`remaining_issues` non-empty, `further_polish_recommended: yes`):
 
@@ -730,7 +763,7 @@ Present via `AskUserQuestion`. Two example shapes:
 >
 > 1. **Polish again** (recommended) — close the remaining <N> issues
 > 2. **Publish now** — ship as-is
-> 3. **Done for now** — CLI is at ~/printing-press/library/<cli-name>"
+> 3. **Done for now** — CLI is at $PRESS_LIBRARY/<cli-name>"
 
 The recommended option leads, carries the `(recommended)` label, and the leading `Recommendation:` line states the agent's call explicitly. Three reinforcing channels so the user does not have to infer from ordering.
 

@@ -154,7 +154,7 @@ elif ! _resolve_press_bin >/dev/null; then
     export PATH="$HOME/go/bin:$PATH"
   else
     # Refuse: the cli-printing-press binary is required and we will not auto-install
-    # it. The README's two-step install (binary + plugin) is the source of truth;
+    # it. The README's install flow is the source of truth;
     # silent auto-install hides failure modes (network, wrong GOPATH) inside an
     # opaque skill invocation.
     echo ""
@@ -204,6 +204,7 @@ else
   PRINTING_PRESS_BIN="$(_resolve_press_bin 2>/dev/null || true)"
 fi
 echo "PRINTING_PRESS_BIN=$PRINTING_PRESS_BIN"
+echo "PRESS_REPO_MODE=$_press_repo"
 
 # Shadow detector (advisory). When a local build is in use, surface any
 # differing global so the user can see at a glance that the two binaries
@@ -237,7 +238,7 @@ if [ -z "$PRESS_BASE" ]; then
 fi
 
 PRESS_SCOPE="$PRESS_BASE-$(printf '%s' "$_scope_dir" | shasum -a 256 | cut -c1-8)"
-PRESS_HOME="$HOME/printing-press"
+PRESS_HOME="${PRINTING_PRESS_HOME:-$HOME/printing-press}"
 PRESS_RUNSTATE="$PRESS_HOME/.runstate/$PRESS_SCOPE"
 PRESS_LIBRARY="$PRESS_HOME/library"
 PRESS_MANUSCRIPTS="$PRESS_HOME/manuscripts"
@@ -387,11 +388,11 @@ CODEX_CONSECUTIVE_FAILURES=0
 ```
 <!-- PRESS_SETUP_CONTRACT_END -->
 
-**MANDATORY: Read and apply [references/setup-checks.md](references/setup-checks.md) immediately after the setup contract bash block runs, before any other action.** It handles six signals the contract emits to stdout: `[setup-error]` (refuse to run, surface the install instructions), `[repo-upgrade-available]` (interactive `AskUserQuestion` prompt + optional repo pull), the min-binary-version compatibility check (hard stop if binary is too old), `[upgrade-available]` (interactive `AskUserQuestion` prompt + optional standalone binary upgrade), `[browser-tools-missing]` (interactive `AskUserQuestion` prompt + optional install of browser-use and/or agent-browser), and the `PRINTING_PRESS_BIN=<abs-path>` marker plus optional `[binary-shadow]` warning (capture the path; use it for every subsequent generator invocation). Skipping the reference will cause the skill to proceed with a missing or out-of-date binary, hit a mid-flight install prompt if browser-sniff is later needed, or invoke the wrong binary because a stale global or the public catalog installer on `PATH` shadowed the local build. Do not skip.
+**MANDATORY: Read and apply [references/setup-checks.md](references/setup-checks.md) immediately after the setup contract bash block runs, before any other action.** It handles the contract output signals: `[setup-error]` (refuse to run, surface the install instructions), `[repo-upgrade-available]` (interactive `AskUserQuestion` prompt + optional repo pull), `PRESS_REPO_MODE=<true|false>` plus the targeted global open-agent-skills freshness check, the min-binary-version compatibility check (hard stop if binary is too old), `[upgrade-available]` (interactive `AskUserQuestion` prompt + optional standalone binary upgrade), `[browser-tools-missing]` (interactive `AskUserQuestion` prompt + optional install of browser-use and/or agent-browser), and the `PRINTING_PRESS_BIN=<abs-path>` marker plus optional `[binary-shadow]` warning (capture the path; use it for every subsequent generator invocation). Skipping the reference will cause the skill to proceed with a missing or out-of-date binary, run with stale global skill text when the session is managed by open-agent-skills, hit a mid-flight install prompt if browser-sniff is later needed, or invoke the wrong binary because a stale global or the public catalog installer on `PATH` shadowed the local build. Do not skip.
 
 **Absolute-path rule.** The preflight contract always emits `PRINTING_PRESS_BIN=<absolute path>` to stdout. Capture this value and substitute it (the resolved absolute path, not the literal `$PRINTING_PRESS_BIN` token) for every subsequent `cli-printing-press ...` invocation in this skill, references, and any sub-skill you delegate to. The `export PATH=...` line inside the contract only affects the single Bash tool call it runs in; later Bash tool calls open fresh shells and resolve bare `cli-printing-press` against the user's default `PATH`, where a stale globally-installed binary (`$HOME/go/bin/cli-printing-press`, Homebrew copy, etc.) will silently shadow the local build the preflight just chose. Bash code examples below are written `cli-printing-press generate ...` for readability — replace `cli-printing-press` with the captured absolute path each time you actually run one.
 
-Only after preflight completes successfully (no `[setup-error]`; any `[repo-upgrade-available]`, `[upgrade-available]`, or `[browser-tools-missing]` was offered to the user; `PRINTING_PRESS_BIN` is captured) should you proceed to the Orientation & Briefing section below.
+Only after preflight completes successfully (no `[setup-error]`; no global skill update that requires restart; any `[repo-upgrade-available]`, `[upgrade-available]`, or `[browser-tools-missing]` was offered to the user; `PRINTING_PRESS_BIN` is captured) should you proceed to the Orientation & Briefing section below.
 
 ## Orientation & Briefing
 
@@ -403,7 +404,7 @@ If the user typed `/printing-press` with no arguments (no API name, no `--spec`,
 
 > The Printing Press generates a fully functional CLI for any API. You give it an API name, a spec file, or a URL. It researches the landscape, catalogs every feature that exists in any competing tool, invents novel features of its own, then generates a Go CLI that matches and beats everything out there — with offline search, agent-native output, and a local SQLite data layer.
 >
-> By the end, you'll have a working CLI in `~/printing-press/library/` that you can use for yourself, ship on your own, or apply to add to the printing-press library.
+> By the end, you'll have a working CLI in `$PRESS_LIBRARY/` that you can use for yourself, ship on your own, or apply to add to the printing-press library.
 >
 > The process takes 30-60 minutes depending on API complexity. Simple APIs with official specs (Stripe, GitHub) are faster. Undocumented APIs that need discovery (ESPN, Domino's) take longer.
 
@@ -456,7 +457,7 @@ Print as prose, matching the style of the example below:
 > 3. I shall present what I found and what I invented — you will have a chance to add your own ideas or adjust the plan before I build
 > 4. I shall generate a Go CLI, build every feature from the plan, then verify quality through dogfood, runtime verification, and scoring
 >
-> **What you will have at the end:** A fully functional CLI at `~/printing-press/library/<api>` that you can use yourself, ship on your own, or apply to add to the printing-press library.
+> **What you will have at the end:** A fully functional CLI at `$PRESS_LIBRARY/<api>` that you can use yourself, ship on your own, or apply to add to the printing-press library.
 >
 > **Time:** 30-60 minutes depending on API complexity.
 >
@@ -595,7 +596,7 @@ Short-lived command captures may use `/tmp/printing-press/` with unique `mktemp`
 paths and must be deleted after use.
 
 Examples of the current naming/layout:
-- `~/printing-press/library/notion/` — published CLI directory (keyed by API slug)
+- `$PRESS_LIBRARY/notion/` — published CLI directory (keyed by API slug)
 - `notion-pp-cli` — the binary name inside the directory
 - `/printing-press emboss notion` — emboss accepts both slug and CLI name
 - `discord-pp-cli/internal/store/store.go` — internal source paths still use CLI name
@@ -1592,12 +1593,15 @@ For each tool, fill in what you know from the research. Stars and command_count 
 3. `value_prop` expands the headline to 2–3 sentences. Name specific novel features by command where helpful.
 4. `auth_narrative` tells the real auth story for this API (crumb handshake, cookie session, OAuth device flow). Omit for standard API-key auth where the generic branch is fine.
 5. `quickstart` is a 3–6 step flow using REAL arguments (symbols, IDs, resource names an agent can actually pass). Each step's `comment` explains *why* it runs. This replaces the generic "resource list" first-command fallback.
+   - Step 1 of `quickstart` MUST be verify-safe: it must exit 0 when `validate-narrative --full-examples` appends `--dry-run` in a no-credentials environment.
+   - Use `<cli> doctor --dry-run` as step 1 (health check, works without auth). Do not use `<cli> auth set-token <token>` as step 1 because it requires a positional token and is not a verify-safe runnable first step. Auth setup instructions belong in `auth_narrative` prose only, not as an executable quickstart command.
 6. `troubleshoots` captures API-specific failure modes (rate-limit mitigation, cookie expiry, paginated quirks). Each `fix` must be actionable — a command or a concrete setting change.
 7. `when_to_use` is SKILL-only narrative. 2–4 sentences describing the kinds of agent tasks this CLI is the right choice for. Not rendered in README.
 8. `recipes` are 3–5 worked examples rendered in SKILL.md. Each has a title, a real command, and a one-line explanation. Prefer recipes that exercise novel features. **At least one recipe must pair `--agent` with `--select`** — using dotted paths (e.g. `--select events.shortName,events.competitions.competitors.team.displayName`) when the response is deeply nested. APIs like ESPN, HubSpot, and Linear return tens of KB per call; without a `--select` recipe, agents burn context parsing verbose payloads. Pick a command known to return a large or deeply nested response and show the narrowing pattern. **Regex literals must double-escape backslashes** — write `\\b` not `\b` (and `\\t`, `\\f`, etc.) inside any `command`, `fix`, or other JSON string field. JSON parses `\b` as backspace (0x08), `\f` as form feed (0x0C), and so on, which then leak into the rendered SKILL.md as control bytes that render as nothing in most viewers. The generator's render-time scanner rejects these with a clear offset; double-escape from the start to avoid the error.
 9. `trigger_phrases` are natural-language phrases a user might say that should invoke this CLI's skill. Include 3–5 domain-specific phrases (e.g. for a finance CLI: "quote AAPL", "check my portfolio", "options for TSLA") and 2 generic phrases ("use <api-name>", "run <api-name>"). Domain verbs vary — don't just template "use X" variants.
 10. All `narrative` fields are optional. Omit fields you can't populate honestly rather than emit filler. The generator falls back to generic content gracefully.
 11. **Avoid hardcoded counts in narrative copy when the count tracks a runtime list.** A number embedded in `headline` or `value_prop` ("across N trusted sources", "from N retailers", "queries N vendors") propagates into root.go's Short/Long, the README, the SKILL, the MCP tools description, and `which.go` — every output surface that reads the narrative. When the underlying registry grows or shrinks, the count goes stale across all of those surfaces simultaneously, and a single-line edit to add a source requires hunting down ~10 hardcoded copies. Prefer plural-without-count phrasing ("across the major sources", "from a curated set of retailers") or describe the breadth qualitatively ("dozens of vendors") rather than committing to a specific integer. If a count is load-bearing for the value prop, keep the brief's narrative count-free and have the printed-CLI's README/SKILL author write the count once into a single hand-edited paragraph after generation — accepting that it will need a manual update whenever the registry changes.
+12. **Don't put side-effectful auth setup in `quickstart[0]`.** `validate-narrative --strict --full-examples` classifies `auth login`, `auth set-token`, `auth logout`, and `auth setup` as side-effectful for every auth type (see `isSideEffectfulNarrativeExample` in `internal/narrativecheck/narrativecheck.go`) and counts each as a strict-mode failure via `Report.HasFailures()`, so any quickstart whose step 0 is `<cli> auth login --chrome` or `<cli> auth set-token $KEY` guarantees a Phase 4 shipcheck round-trip. This applies unconditionally across every auth type the Printing Press supports — `api_key`, `bearer_token`, `cookie`, `composed`, `session_handshake`, and `oauth2` alike. Use `doctor` (or another read-only invocation like `account get` if auth-required-and-cookie-already-imported is the onboarding entry point) as the first quickstart step, and mention the one-time auth-setup step in that step's `comment` field. The auth flow itself belongs in `auth_narrative` prose, not in `quickstart`.
 
 **Pre-render framework-command check.** Before running `generate --research-dir`,
 validate the framework command examples already present in `research.json`.
@@ -2598,7 +2602,7 @@ After building each command in Priority 1 and Priority 2, verify these 10 princi
 5. **Safe retries**: Mutation commands support `--dry-run`, idempotent where possible
 6. **Composability**: Exit codes are typed (0/2/3/4/5/7/10 as applicable), output pipes to `jq` cleanly
 7. **Bounded responses**: `--compact` returns only high-gravity fields, list commands have `--limit`
-8. **Verify-friendly RunE**: Hand-written commands MUST NOT use `Args: cobra.MinimumNArgs(N)` or `MarkFlagRequired(...)`. Cobra evaluates both before RunE runs, so a `--dry-run` guard inside RunE cannot reach if those gates fail. Verify probes commands with `--dry-run` and expects exit 0; commands with hard arg/flag gates fail those probes. Instead: validate inside RunE, fall through to `cmd.Help()` for help-only invocations, and short-circuit on `dryRunOK(flags)` before any IO.
+8. **Verify-friendly RunE**: Hand-written commands MUST NOT use `Args: cobra.MinimumNArgs(N)` or `MarkFlagRequired(...)`. Cobra evaluates both before RunE runs, so a `--dry-run` guard inside RunE cannot reach if those gates fail. Verify probes commands with `--dry-run` and expects exit 0; commands with hard arg/flag gates fail those probes. Instead: validate inside RunE, fall through to `cmd.Help()` only for unambiguous help-only invocations (no args and no flags), short-circuit on `dryRunOK(flags)` before any IO, and return `usageErr(...)` with exit 2 when required input is missing in real mode.
    - **Use string for "positional OR flag" commands**: when a command accepts a positional `<x>` OR a flag `--y` as alternatives (e.g., `snapshot <co>` or `snapshot --domain example.com`), declare `Use: "<cmd> [x]"` with **square brackets** (optional), not `<x>` (required). Validate "exactly one of x or --y" inside RunE. Required positionals declared with angle brackets break verify-skill recipes that use the flag-only form.
    - **Declare verifier fixture inputs when generic values are not enough**: if the command needs realistic positional values or required flags to pass the verifier's happy path, add `Annotations: map[string]string{"pp:happy-args": "<item>=example-id;--query=example"}` or assign a whole initialized `cmd.Annotations` map after construction. The verifier consumes semicolon-separated tokens in order: `<label>=value` tokens overlay synthesized positional args, and `--flag=value` tokens overlay or add flag/value pairs. Commands without the annotation keep the generic synthesized inputs.
 9. **Side-effect commands stay quiet under verify**: Any hand-written command that performs a visible side effect (opens a browser tab, sends a notification, plays audio, dials out to an OS handler) MUST follow both halves of the convention:
@@ -2626,17 +2630,27 @@ Use this shape for every hand-written transcendence command. The generator emits
 
 ```go
 RunE: func(cmd *cobra.Command, args []string) error {
-    if len(args) == 0 {
+    if len(args) == 0 && cmd.Flags().NFlag() == 0 {
         return cmd.Help()
     }
     if dryRunOK(flags) {
         return nil
     }
+    if <required input missing> {
+        _ = cmd.Usage()
+        return usageErr(fmt.Errorf("<flag-or-arg> is required"))
+    }
     // ... real work ...
 }
 ```
 
-Why both checks: the `len(args) == 0` branch handles `<cli> mycommand --help` invocations gracefully; the `dryRunOK` branch handles verify's `<cli> mycommand <fixture> --dry-run` probes. Spec-derived commands generated by the Printing Press already follow this pattern -- this rule keeps hand-written novel-feature commands consistent with them.
+Why each branch exists: the `len(args) == 0 && cmd.Flags().NFlag() == 0` branch handles an interactive `<cli> mycommand` help-only invocation without treating help as an error. The `dryRunOK` branch handles verify's `<cli> mycommand <fixture> --dry-run` probes before network or filesystem IO. The required-input branch handles non-help invocations where a mode or output flag is present (`--no-input`, `--agent`, `--json`) but the required ID, query, path, or other command input is still missing. Missing required input must print usage and return `usageErr(...)` so callers get exit code 2 instead of a silent rc=0 skip.
+
+Do not collapse the first and third branches into `if len(args) == 0 || <flag empty> { return cmd.Help() }`. `cmd.Help()` returns `nil`, so agents and scripts cannot distinguish "help was requested" from "the command skipped required work."
+
+For commands with no required inputs, omit the `usageErr(...)` branch entirely and keep the help-only plus dry-run branches.
+
+If the command reads a file or directory (`os.ReadFile`, `os.ReadDir`, `os.Stat`, `os.Open`, `os.OpenFile`, `os.Lstat`, `filepath.Walk`, `filepath.WalkDir`, or any other filesystem access), the read MUST come after `dryRunOK()`, not before. Filesystem reads before `dryRunOK()` cause `validate-narrative --full-examples` to fail with a missing-file error rather than a clean dry-run exit 0.
 
 ### Phase 3 delegation: require feature-level acceptance
 
@@ -2774,6 +2788,17 @@ func newXxxCmd(flags *rootFlags) *cobra.Command {
 
 ```go
 RunE: func(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 && cmd.Flags().NFlag() == 0 {
+		return cmd.Help()
+	}
+	if dryRunOK(flags) {
+		fmt.Fprintln(cmd.OutOrStdout(), "would fetch <resource>")
+		return nil
+	}
+	if <required input missing> {
+		_ = cmd.Usage()
+		return usageErr(fmt.Errorf("<flag-or-arg> is required"))
+	}
 	c, err := flags.newClient()
 	if err != nil {
 		return err
@@ -2809,6 +2834,17 @@ The generic `resources` table is keyed by `resource_type`. Flat resources synced
 //   cmd.Flags().StringVar(&dbPath, "db", "", "Database path")
 
 RunE: func(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 && cmd.Flags().NFlag() == 0 {
+		return cmd.Help()
+	}
+	if dryRunOK(flags) {
+		fmt.Fprintln(cmd.OutOrStdout(), "would query local store")
+		return nil
+	}
+	if <required input missing> {
+		_ = cmd.Usage()
+		return usageErr(fmt.Errorf("<flag-or-arg> is required"))
+	}
 	if dbPath == "" {
 		dbPath = defaultDBPath("<cli>-pp-cli") // replace <cli> with the API slug
 	}
@@ -2852,6 +2888,10 @@ For flat-only resources, the typed FTS/upsert tables the generator emits (e.g., 
 For features that combine both (cache an API response in the store, or fall through to live when the local store is stale), nest one skeleton inside the other and use the `--data-source auto/local/live` flag pattern from the generated `sync` command.
 
 **Shared helpers available to novel code:** The generator emits `internal/cliutil/` in every CLI. When authoring novel commands, prefer `cliutil.FanoutRun` for any aggregation command (any `--site`/`--source`/`--region` CSV fan-out) and `cliutil.CleanText` for any text extracted from HTML or schema.org JSON-LD. Re-implementing these inline is how recipe-goat's trending silent-drop and `&#39;` entity bugs shipped.
+
+**Hand-coded duration flags MUST use `cliutil.ParseDurationLoose` with a `StringVar` flag (not `DurationVar`).** Go's `time.ParseDuration` rejects the `7d`/`30d`/`1w`/`4w` day/week shorthand that the framework's `sync --since` already accepts, so a `DurationVar` flag fails at runtime on input agents and users reasonably expect. Declare the flag as a `StringVar`, then post-parse with `cliutil.ParseDurationLoose`, which adds `d`/`w` suffix support and otherwise defers to `time.ParseDuration`.
+
+**OData v3 datetime fields MUST be decoded with `cliutil.ParseODataDate`.** OData v3 APIs (Exact Online, Microsoft Dynamics 365 Business Central, Dynamics NAV) return dates as `/Date(1715731200000)/` string literals that no standard parser accepts, so the raw value passes straight through to JSON output and agents cannot parse `created_at`/`due_date`. `cliutil.ParseODataDate(s) (time.Time, bool)` decodes the literal to a UTC `time.Time` and falls back to RFC3339, so callers need not dispatch on format. Re-implementing this inline per command is how the same regex ships inconsistently across OData CLIs.
 
 **Streaming frame normalizers MUST use `cliutil.ExtractNumber` / `cliutil.ExtractInt` rather than raw `float64`/`int64` struct fields.** Real-world WebSocket and streaming JSON feeds (Binance, Coinbase, Kraken, Stripe `*_decimal`, vendor-specific market-data feeds) commonly encode numeric values as JSON-encoded strings (`"price":"1.91"`). `json.Unmarshal` of a JSON string into a `float64` field returns no error and silently leaves the field at 0; combined with NULL-on-zero patterns this discards the entire numeric feed with no error signal anywhere in the pipeline. The helpers accept both shapes (JSON number or JSON-encoded string), report `ok=false` on missing/null/unparseable, and are the canonical extraction path for `map[string]json.RawMessage` decoders. Re-implementing this inline as a `float64` struct field is the silent-aggregation-failure bug class.
 

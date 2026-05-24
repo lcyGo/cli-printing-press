@@ -43,8 +43,10 @@ const (
 	extensionSpeakeasyExample      = "x-speakeasy-example"
 	extensionTierRouting           = "x-tier-routing"
 	extensionTier                  = "x-tier"
+	extensionRateClass             = "x-rate-class"
 	extensionMCP                   = "x-mcp"
 	extensionLegacyMCP             = "mcp"
+	extensionCache                 = "x-cache"
 	extensionSyncWalker            = "x-pp-sync-walker"
 	extensionAPIName               = "x-api-name"
 	extensionDisplayName           = "x-display-name"
@@ -571,8 +573,16 @@ func parseWithLocation(data []byte, lenient bool, strictRefs bool, location *url
 	if err != nil {
 		return nil, err
 	}
+	rateClass, err := parseStringOpenAPIExtension(doc, extensionRateClass)
+	if err != nil {
+		return nil, err
+	}
 
 	mcpConfig, err := parseMCPExtension(doc)
+	if err != nil {
+		return nil, err
+	}
+	cacheConfig, err := parseTypedExtension[spec.CacheConfig](doc, extensionCache)
 	if err != nil {
 		return nil, err
 	}
@@ -596,9 +606,11 @@ func parseWithLocation(data []byte, lenient bool, strictRefs bool, location *url
 		BasePath:                     basePath,
 		WebsiteURL:                   websiteURL,
 		ProxyRoutes:                  proxyRoutes,
+		RateClass:                    rateClass,
 		Auth:                         auth,
 		TierRouting:                  tierRouting,
 		MCP:                          mcpConfig,
+		Cache:                        cacheConfig,
 		EndpointTemplateVars:         templateVars,
 		EndpointTemplateEnvOverrides: templateEnvOverrides,
 		EndpointPathParamDefaults:    pathParamDefaults,
@@ -804,6 +816,27 @@ func lookupOpenAPIInfoExtension(doc *openapi3.T, key string) (any, bool) {
 		return raw, ok
 	}
 	return nil, false
+}
+
+func parseStringOpenAPIExtension(doc *openapi3.T, key string) (string, error) {
+	if doc != nil && doc.Extensions != nil {
+		if _, ok := doc.Extensions[key]; ok {
+			return parseStringExtensionValue(doc.Extensions, key)
+		}
+	}
+	if doc != nil && doc.Info != nil && doc.Info.Extensions != nil {
+		if _, ok := doc.Info.Extensions[key]; ok {
+			return parseStringExtensionValue(doc.Info.Extensions, key)
+		}
+	}
+	return "", nil
+}
+
+func parseStringExtensionValue(extensions map[string]any, key string) (string, error) {
+	if _, ok := extensions[key].(string); !ok {
+		return "", fmt.Errorf("%s must be a string", key)
+	}
+	return stringExtension(extensions, key), nil
 }
 
 func mapAuth(doc *openapi3.T, name string) spec.AuthConfig {
@@ -2714,6 +2747,7 @@ func mapResources(doc *openapi3.T, out *spec.APISpec, basePath string) {
 				BodyRequired:       bodyRequired,
 				BodyIsArray:        bodyIsArray,
 				RequestContentType: requestContentType,
+				Tags:               append([]string{}, op.Tags...),
 			}
 			endpoint.Tier = readTierExtension(op.Extensions, fmt.Sprintf("%s %q", strings.ToUpper(method), path))
 			if endpoint.Tier == "" {

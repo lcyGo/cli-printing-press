@@ -53,6 +53,13 @@ const (
 )
 
 const (
+	RateClassPerSecond = "per-second"
+	RateClassDaily     = "daily"
+	RateClassMonthly   = "monthly"
+	RateClassUnlimited = "unlimited"
+)
+
+const (
 	TierAuthTypeNone        = "none"
 	TierAuthTypeAPIKey      = "api_key"
 	TierAuthTypeBearerToken = "bearer_token"
@@ -170,6 +177,7 @@ type APISpec struct {
 	SpecSource                  string              `yaml:"spec_source,omitempty" json:"spec_source,omitempty"`       // official, community, sniffed, docs — affects generated client defaults
 	ClientPattern               string              `yaml:"client_pattern,omitempty" json:"client_pattern,omitempty"` // rest (default), proxy-envelope — affects generated HTTP client
 	HTTPTransport               string              `yaml:"http_transport,omitempty" json:"http_transport,omitempty"` // standard (default for official APIs), browser-http, browser-chrome, browser-chrome-h2, or browser-chrome-h3
+	RateClass                   string              `yaml:"rate_class,omitempty" json:"rate_class,omitempty"`         // per-second, daily, monthly, or unlimited — affects generated sync concurrency defaults
 	HealthCheckPath             string              `yaml:"health_check_path,omitempty" json:"health_check_path,omitempty"`
 	ProxyRoutes                 map[string]string   `yaml:"proxy_routes,omitempty" json:"proxy_routes,omitempty"`    // path prefix → service name for proxy-envelope routing
 	BearerRefresh               BearerRefreshConfig `yaml:"bearer_refresh,omitempty" json:"bearer_refresh,omitzero"` // live-source metadata for rotating public client bearer tokens
@@ -204,6 +212,22 @@ func (s *APISpec) HasTierRouting() bool {
 		return false
 	}
 	return s.TierRouting.DefaultTier != "" || len(s.TierRouting.Tiers) > 0
+}
+
+func (s *APISpec) EffectiveRateClass() string {
+	if s == nil {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(s.RateClass))
+}
+
+func (s *APISpec) SyncDefaultConcurrency() int {
+	switch s.EffectiveRateClass() {
+	case RateClassDaily, RateClassMonthly:
+		return 1
+	default:
+		return 4
+	}
 }
 
 // EndpointTemplateEnvName returns the env-var name that resolves the given
@@ -250,6 +274,140 @@ func (s *APISpec) IsEndpointTemplateVar(placeholder string) bool {
 		return false
 	}
 	return slices.Contains(s.EndpointTemplateVars, placeholder)
+}
+
+// InferEndpointTemplateVarsFromBaseURLs preserves existing explicit
+// placeholders, then appends placeholders found in URL-bearing spec fields.
+// It intentionally ignores endpoint paths: ordinary path params are command
+// inputs, while BaseURL placeholders need runtime config/env substitution.
+func (s *APISpec) InferEndpointTemplateVarsFromBaseURLs() {
+	if s == nil {
+		return
+	}
+	if len(s.EndpointTemplateVars) == 0 && !s.hasURLTemplateVars() {
+		return
+	}
+	seen := make(map[string]bool, len(s.EndpointTemplateVars))
+	out := make([]string, 0, len(s.EndpointTemplateVars))
+	add := func(raw string) {
+		for _, match := range pathParamRe.FindAllStringSubmatch(raw, -1) {
+			if len(match) < 2 || seen[match[1]] {
+				continue
+			}
+			seen[match[1]] = true
+			out = append(out, match[1])
+		}
+	}
+	for _, name := range s.EndpointTemplateVars {
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+
+	s.visitURLTemplateSources(true, func(raw string) bool {
+		add(raw)
+		return true
+	})
+
+	s.EndpointTemplateVars = out
+}
+
+func (s *APISpec) hasURLTemplateVars() bool {
+	return !s.visitURLTemplateSources(false, func(raw string) bool {
+		return !pathParamRe.MatchString(raw)
+	})
+}
+
+func (s *APISpec) visitURLTemplateSources(deterministic bool, visit func(string) bool) bool {
+	if !visit(s.BaseURL) || !visit(s.BasePath) || !visit(s.GraphQLEndpointPath) {
+		return false
+	}
+
+	visitTier := func(tier TierConfig) bool {
+		return visit(tier.BaseURL)
+	}
+	if deterministic {
+		for _, name := range sortedStringKeys(s.TierRouting.Tiers) {
+			if !visitTier(s.TierRouting.Tiers[name]) {
+				return false
+			}
+		}
+	} else {
+		for _, tier := range s.TierRouting.Tiers {
+			if !visitTier(tier) {
+				return false
+			}
+		}
+	}
+
+	visitResource := func(resource Resource) bool {
+		return visitResourceURLTemplateSources(resource, deterministic, visit)
+	}
+	if deterministic {
+		for _, name := range sortedStringKeys(s.Resources) {
+			if !visitResource(s.Resources[name]) {
+				return false
+			}
+		}
+	} else {
+		for _, resource := range s.Resources {
+			if !visitResource(resource) {
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
+func visitResourceURLTemplateSources(r Resource, deterministic bool, visit func(string) bool) bool {
+	if !visit(r.BaseURL) {
+		return false
+	}
+
+	visitEndpoint := func(endpoint Endpoint) bool {
+		return visit(endpoint.BaseURL)
+	}
+	if deterministic {
+		for _, name := range sortedStringKeys(r.Endpoints) {
+			if !visitEndpoint(r.Endpoints[name]) {
+				return false
+			}
+		}
+	} else {
+		for _, endpoint := range r.Endpoints {
+			if !visitEndpoint(endpoint) {
+				return false
+			}
+		}
+	}
+
+	if deterministic {
+		for _, name := range sortedStringKeys(r.SubResources) {
+			if !visitResourceURLTemplateSources(r.SubResources[name], deterministic, visit) {
+				return false
+			}
+		}
+	} else {
+		for _, subResource := range r.SubResources {
+			if !visitResourceURLTemplateSources(subResource, deterministic, visit) {
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
+func sortedStringKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	return keys
 }
 
 func (s *APISpec) EffectiveTier(resource Resource, endpoint Endpoint) string {
@@ -1367,6 +1525,7 @@ type Endpoint struct {
 	RequestContentType string       `yaml:"request_content_type,omitempty" json:"request_content_type,omitempty"`
 	Response           ResponseDef  `yaml:"response" json:"response"`
 	ResponseFormat     string       `yaml:"response_format,omitempty" json:"response_format,omitempty"` // json (default) or html
+	Tags               []string     `yaml:"tags,omitempty" json:"tags,omitempty"`                       // source operation tags; used for generated defaults, not command grouping
 	HTMLExtract        *HTMLExtract `yaml:"html_extract,omitempty" json:"html_extract,omitempty"`       // extraction options when response_format is html
 	Pagination         *Pagination  `yaml:"pagination" json:"pagination"`
 	// EmbeddedPagedSubresources names paged-envelope properties nested
@@ -2206,6 +2365,7 @@ func singularize(s string) string {
 
 func (s *APISpec) Validate() error {
 	s.NormalizeAuthEnvVarSpecs()
+	s.InferEndpointTemplateVarsFromBaseURLs()
 	if s.Name == "" {
 		return fmt.Errorf("name is required")
 	}
@@ -2233,6 +2393,11 @@ func (s *APISpec) Validate() error {
 	case "", HTTPTransportStandard, HTTPTransportBrowserHTTP, HTTPTransportBrowserChrome, HTTPTransportBrowserChromeH2, HTTPTransportBrowserChromeH3:
 	default:
 		return fmt.Errorf("http_transport must be one of: standard, browser-http, browser-chrome, browser-chrome-h2, browser-chrome-h3")
+	}
+	switch s.EffectiveRateClass() {
+	case "", RateClassPerSecond, RateClassDaily, RateClassMonthly, RateClassUnlimited:
+	default:
+		return fmt.Errorf("rate_class must be one of: per-second, daily, monthly, unlimited")
 	}
 	if err := validateExtraCommands(s.ExtraCommands); err != nil {
 		return err
