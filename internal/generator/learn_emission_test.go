@@ -50,6 +50,11 @@ func TestGenerateLearnPackageEmitsAllFiles(t *testing.T) {
 		"internal/learn/patterns/extract_test.go",
 		"internal/learn/patterns/apply.go",
 		"internal/learn/patterns/apply_test.go",
+		// U7: teach.go and teach_test.go land alongside the rest of
+		// the cobra command files in internal/cli/ so the learn
+		// package itself stays cobra-free.
+		"internal/cli/teach.go",
+		"internal/cli/teach_test.go",
 	}
 	for _, rel := range wantFiles {
 		_, err := os.Stat(filepath.Join(outputDir, rel))
@@ -72,6 +77,10 @@ func TestGenerateLearnPackageGatedOff(t *testing.T) {
 
 	_, err := os.Stat(filepath.Join(outputDir, "internal", "learn"))
 	require.True(t, os.IsNotExist(err), "internal/learn must not exist when Learn.Enabled=false")
+
+	// U7: teach.go in internal/cli/ is also gated off.
+	_, err = os.Stat(filepath.Join(outputDir, "internal", "cli", "teach.go"))
+	require.True(t, os.IsNotExist(err), "internal/cli/teach.go must not exist when Learn.Enabled=false")
 }
 
 // TestGenerateLearnPackageCompilesAndTests drives the emitted learn
@@ -92,4 +101,29 @@ func TestGenerateLearnPackageCompilesAndTests(t *testing.T) {
 	require.NoError(t, gen.Generate())
 
 	runGoCommand(t, outputDir, "test", "./internal/learn/...")
+}
+
+// TestGenerateLearnCLICommandsCompileAndTest drives the emitted cobra
+// surface (teach.go, teach_test.go) through `go test ./internal/cli/...`
+// to catch any template issue that produces shape-valid but
+// uncompilable Go, plus any behavior regression in the lifted command
+// surface.
+func TestGenerateLearnCLICommandsCompileAndTest(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("compile-and-test of emitted learn cobra commands skipped in -short mode")
+	}
+
+	apiSpec := minimalSpec("learn-cli")
+	apiSpec.Learn.Enabled = true
+	outputDir := filepath.Join(t.TempDir(), "learn-cli-pp-cli")
+	gen := New(apiSpec, outputDir)
+	gen.VisionSet = VisionTemplateSet{Store: true}
+	require.NoError(t, gen.Generate())
+
+	// The TestSkipLearnHook_* unit tests + the end-to-end teach/recall
+	// tests all live in internal/cli/teach_test.go; running the whole
+	// internal/cli/ test set is the agreed-upon verification path per
+	// the U7 plan.
+	runGoCommand(t, outputDir, "test", "-run", "TestTeach|TestRecall|TestLearnings|TestSkipLearnHook", "./internal/cli/...")
 }

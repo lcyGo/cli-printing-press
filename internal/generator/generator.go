@@ -1715,6 +1715,16 @@ func (g *Generator) renderOptionalSupportFiles() error {
 		if err := g.renderLearnFiles(); err != nil {
 			return err
 		}
+		// teach.go and teach_test.go are emitted into internal/cli/
+		// (not the learn package) because they wire cobra commands;
+		// the learn package itself stays cobra-free per the boundary
+		// established in U3-U5.
+		if err := g.renderTemplate("teach.go.tmpl", filepath.Join("internal", "cli", "teach.go"), g.Spec); err != nil {
+			return fmt.Errorf("rendering teach commands: %w", err)
+		}
+		if err := g.renderTemplate("teach_test.go.tmpl", filepath.Join("internal", "cli", "teach_test.go"), g.Spec); err != nil {
+			return fmt.Errorf("rendering teach commands test: %w", err)
+		}
 	}
 
 	if g.FixtureSet != nil {
