@@ -1502,6 +1502,9 @@ func (g *Generator) prepareOutput() error {
 		g.resetHTMLSyncStubCache()
 	}
 	g.VisionSet = constrainVisionTemplates(g.Spec, g.VisionSet)
+	if g.Spec.Learn.Enabled && !g.VisionSet.Store {
+		return fmt.Errorf("learn.enabled requires VisionSet.Store=true; the learn package depends on internal/store")
+	}
 	if g.renameActiveFrameworkResourceCollisions() {
 		g.profile = profiler.Profile(g.Spec)
 		g.resetHTMLSyncStubCache()
