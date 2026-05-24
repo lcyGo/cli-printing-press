@@ -1150,11 +1150,11 @@ func scoreVision(dir string) int {
 	if fileExists(filepath.Join(cliDir, "tail.go")) {
 		tier1 += 0.5
 	}
-	if fileExists(filepath.Join(dir, "internal", "learn", "doc.go")) {
+	if fileExists(filepath.Join(cliDir, "import.go")) {
 		tier1 += 0.5
 	}
-	// time, so the credit stays modest (+0.5).
-	if fileExists(filepath.Join(dir, "internal", "learn", "learn.go")) {
+	// internal/learn/doc.go is the presence sentinel for the recall/teach loop (+0.5).
+	if fileExists(filepath.Join(dir, "internal", "learn", "doc.go")) {
 		tier1 += 0.5
 	}
 	// Workflow or compound command files
