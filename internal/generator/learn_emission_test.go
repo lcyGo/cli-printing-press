@@ -3,8 +3,10 @@ package generator
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/mvanhorn/cli-printing-press/v4/internal/spec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -125,5 +127,79 @@ func TestGenerateLearnCLICommandsCompileAndTest(t *testing.T) {
 	// tests all live in internal/cli/teach_test.go; running the whole
 	// internal/cli/ test set is the agreed-upon verification path per
 	// the U7 plan.
-	runGoCommand(t, outputDir, "test", "-run", "TestTeach|TestRecall|TestLearnings|TestSkipLearnHook", "./internal/cli/...")
+	runGoCommand(t, outputDir, "test", "-run", "TestTeach|TestRecall|TestLearnings|TestSkipLearnHook|TestNewLearnConfig|TestInitLearn", "./internal/cli/...")
+}
+
+// TestGenerateLearnInitWiresSpec verifies that the emitted learn_init.go
+// translates a populated spec.Learn block (ticker patterns + stopwords +
+// entity-lookup seeds) into the corresponding Go literals at the right
+// call sites. Asserts the textual contract; the compile + behavior
+// contract is covered by TestGenerateLearnCLICommandsCompileAndTest's
+// run of the emitted CLI's own init tests.
+func TestGenerateLearnInitWiresSpec(t *testing.T) {
+	t.Parallel()
+
+	apiSpec := minimalSpec("learn-wired")
+	apiSpec.Learn.Enabled = true
+	apiSpec.Learn.TickerPatterns = []string{
+		"^WIDGET-[A-Z0-9]+$",
+	}
+	apiSpec.Learn.Stopwords = []string{"odds", "wins"}
+	apiSpec.Learn.EntityLookupSeeds = map[string][]spec.LookupSeed{
+		"country": {
+			{Canonical: "US", Aliases: []string{"USA", "America"}},
+		},
+	}
+	outputDir := filepath.Join(t.TempDir(), "learn-wired-pp-cli")
+	gen := New(apiSpec, outputDir)
+	gen.VisionSet = VisionTemplateSet{Store: true}
+	require.NoError(t, gen.Generate())
+
+	body, err := os.ReadFile(filepath.Join(outputDir, "internal", "cli", "learn_init.go"))
+	require.NoError(t, err)
+	got := string(body)
+
+	for _, want := range []string{
+		"regexp.Compile(`^WIDGET-[A-Z0-9]+$`)",
+		`cfg.RegisterTickerPattern(re)`,
+		`cfg.RegisterStopwords(`,
+		`"odds"`,
+		`"wins"`,
+		`map[string][]lookups.SeedConfig`,
+		`"country"`,
+		`{Canonical: "US", Aliases: []string{"USA", "America"}}`,
+		`lookups.SeedFromConfig(db, seeds)`,
+		`learnInitOnce`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("learn_init.go missing %q\n--- emitted ---\n%s", want, got)
+		}
+	}
+}
+
+// TestGenerateLearnInitEmptyConfigOmitsImports verifies the import gate:
+// when Learn is enabled but no ticker patterns / seeds are declared,
+// the emitted file must not pull in unused regexp / lookups imports
+// that would fail the printed CLI's `go build`.
+func TestGenerateLearnInitEmptyConfigOmitsImports(t *testing.T) {
+	t.Parallel()
+
+	apiSpec := minimalSpec("learn-empty")
+	apiSpec.Learn.Enabled = true
+	// No TickerPatterns, Stopwords, or EntityLookupSeeds.
+	outputDir := filepath.Join(t.TempDir(), "learn-empty-pp-cli")
+	gen := New(apiSpec, outputDir)
+	gen.VisionSet = VisionTemplateSet{Store: true}
+	require.NoError(t, gen.Generate())
+
+	body, err := os.ReadFile(filepath.Join(outputDir, "internal", "cli", "learn_init.go"))
+	require.NoError(t, err)
+	got := string(body)
+
+	if strings.Contains(got, `"regexp"`) {
+		t.Errorf("learn_init.go must not import regexp when no TickerPatterns declared\n--- emitted ---\n%s", got)
+	}
+	if strings.Contains(got, `/learn/lookups"`) {
+		t.Errorf("learn_init.go must not import lookups when no EntityLookupSeeds declared\n--- emitted ---\n%s", got)
+	}
 }
