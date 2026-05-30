@@ -24,8 +24,34 @@ jobs:
       - name: Validate catalog PR body
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_REF: ${{ github.base_ref }}
         run: |
           set -euo pipefail
+
+          # Determine whether this PR adds/edits a generatable catalog entry
+          # (one with spec_url/spec_format, or a spec file under catalog/specs/).
+          # The CLI Shape section is required for those and optional ("N/A")
+          # for wrapper-only entries. fetch-depth: 0 on checkout gives full
+          # history, but fetch the base ref explicitly to guard partial-clone
+          # edge cases on fork PRs (mirrors the changed-entry step below).
+          git fetch --no-tags --prune origin "$BASE_REF" || true
+
+          GENERATABLE=false
+          mapfile -t CHANGED < <(git diff --name-only --diff-filter=ACMR "origin/${BASE_REF}...HEAD" -- 'catalog/**')
+          for file in "${CHANGED[@]}"; do
+            case "$file" in
+              catalog/specs/*)
+                GENERATABLE=true
+                ;;
+              catalog/*.yaml)
+                if [ -f "$file" ] && grep -Eq '^(spec_url|spec_format):' "$file"; then
+                  GENERATABLE=true
+                fi
+                ;;
+            esac
+          done
+          export GENERATABLE
+          echo "Generatable catalog entry: $GENERATABLE"
 
           python3 - <<'PY'
           import os
@@ -33,6 +59,7 @@ jobs:
           import sys
 
           body = os.environ.get("PR_BODY") or ""
+          generatable = os.environ.get("GENERATABLE") == "true"
           required = [
               "Embedded catalog fit",
               "Distinct blueprint pattern",
@@ -45,11 +72,14 @@ jobs:
           ]
           next_field = "|".join(rf"^{re.escape(label)}:\s*" for label in required)
 
-          section_match = re.search(
-              r"(?ims)^## Catalog Justification\s*$(.*?)(?=^##\s+|\Z)",
-              body,
-          )
-          catalog_section = section_match.group(1) if section_match else ""
+          def section_body(title):
+              match = re.search(
+                  rf"(?ims)^## {re.escape(title)}\s*$(.*?)(?=^##\s+|\Z)",
+                  body,
+              )
+              return match.group(1) if match else None
+
+          catalog_section = section_body("Catalog Justification") or ""
 
           def field_has_content(label):
               match = re.search(
@@ -62,20 +92,31 @@ jobs:
               return bool(content and content.upper() != "N/A")
 
           missing = []
-          if not section_match:
+          if section_body("Catalog Justification") is None:
               missing.append("## Catalog Justification")
           for label in required:
               if not field_has_content(label):
                   missing.append(label)
 
+          # CLI Shape: section must be present for every catalog PR. For a
+          # generatable entry it must also carry the real command surface
+          # (not empty, not "N/A"); wrapper-only entries may leave "N/A".
+          cli_shape = section_body("CLI Shape")
+          if cli_shape is None:
+              missing.append("## CLI Shape")
+          elif generatable:
+              content = re.sub(r"(?s)<!--.*?-->", "", cli_shape).strip()
+              if not content or content.upper() == "N/A":
+                  missing.append("## CLI Shape (generated command surface required for generatable entries)")
+
           if missing:
-              print("FAIL: catalog PRs must complete the Catalog Justification section.")
+              print("FAIL: catalog PRs must complete the Catalog Justification and CLI Shape sections.")
               print("Missing or empty fields:")
               for item in missing:
                   print(f"  - {item}")
               sys.exit(1)
 
-          print("PASS: Catalog Justification section is present and complete.")
+          print("PASS: Catalog Justification and CLI Shape sections are present and complete.")
           PY
 
       - uses: actions/setup-go@v6

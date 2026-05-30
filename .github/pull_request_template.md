@@ -43,6 +43,16 @@ Generation path:
 
 Stale-body check:
 
+## CLI Shape
+
+<!--
+Required when this PR adds or edits a generatable catalog entry (one with spec_url/spec_format, or a spec file under catalog/specs/). Wrapper-only entries with no generatable spec may write "N/A".
+
+Show the command surface `cli-printing-press generate <name>` produces, so reviewers can see what commands/flags/hosts the entry yields without checking out and generating it:
+1. The generated CLI's top-level `--help` output (or its command list).
+2. A short table mapping each user-facing command to its endpoint/host, flagging any novel or read-only commands.
+-->
+
 ## Risk
 
 <!-- What could this break? Include generated output, MCP surface, auth, catalog, publish flow, verifier, scorer, or release behavior if relevant. -->
