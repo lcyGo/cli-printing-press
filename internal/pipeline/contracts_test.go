@@ -435,6 +435,9 @@ func TestPrintingPressSkillReprintPromoteRoutingHandlesRebuiltNovels(t *testing.
 	promote := substringBetween(t, skill, "### Promote to Library", "`ship-with-gaps` is promoted")
 
 	assert.Contains(t, promote, "Before choosing Path B for `NOVEL_COUNT > 0`, distinguish preservation")
+	assert.Contains(t, promote, "creator attribution is guarded in two places")
+	assert.Contains(t, promote, "restores the library creator, prepends the staged creator as contributor")
+	assert.Contains(t, promote, "must never silently replace the library creator with the operator's git identity")
 	assert.Contains(t, promote, "from-scratch reprint whose fresh tree reimplements all prior novels")
 	assert.Contains(t, promote, "REGEN_DRY_RUN_REPORT=\"$PROOFS_DIR/regen-merge-dry-run-report.json\"")
 	assert.Contains(t, promote, "regen-merge dry-run failed; see $REGEN_DRY_RUN_REPORT")
@@ -454,6 +457,8 @@ func TestPrintingPressSkillReprintPromoteRoutingHandlesRebuiltNovels(t *testing.
 	assert.Contains(t, reprint, "Phase 5.6 first\ndry-runs `cli-printing-press regen-merge")
 	assert.Contains(t, reprint, "fresh tree contains all prior novel work")
 	assert.Contains(t, reprint, "genuine `NOVEL-COLLISION` / missing-referent cases halt")
+	assert.Contains(t, reprint, "preserve the existing\nlibrary manifest's permanent `creator`")
+	assert.Contains(t, reprint, "Do not repair this by hand-editing")
 }
 
 func TestPrintingPressSkillSetsNonCatalogCategoryBeforeGenerate(t *testing.T) {
@@ -561,15 +566,24 @@ func TestAmendSkillRequiresUpstreamBreadcrumbsForTemporaryPatches(t *testing.T) 
 	assert.NotContains(t, skill, "workflow rejects PRs where one is present without the other")
 }
 
-func TestGeneratedAgentsTemplateDocumentsUpstreamPatchHandoff(t *testing.T) {
+func TestGeneratedAgentsTemplatePointsToCatalogForPatchMechanics(t *testing.T) {
 	template := readContractFile(t, filepath.Join("..", "generator", "templates", "agents.md.tmpl"))
-	minimumShape := substringBetween(t, template, "Minimum shape:", "Use `deferred_to_upstream`")
 
-	assert.Contains(t, template, `"deferred_to_upstream": [`)
-	assert.Contains(t, template, `"upstream_issue": "https://github.com/mvanhorn/cli-printing-press/issues/<n>"`)
-	assert.Contains(t, template, "Use `deferred_to_upstream` when a local patch is a temporary bridge")
-	assert.NotContains(t, minimumShape, "deferred_to_upstream")
-	assert.NotContains(t, minimumShape, "upstream_issue")
+	// The per-CLI guide keeps CLI-local orientation plus a pointer to where
+	// customizations are recorded, but must NOT duplicate the patch-entry
+	// mechanics (schema, deferred_to_upstream, upstream_issue) -- those live once
+	// in the source catalog's AGENTS.md, the single source of truth. Duplicating
+	// ecosystem schema into every generated CLI is what let published AGENTS.md
+	// drift to the legacy patch form; a stable pointer cannot rot.
+	assert.Contains(t, template, "## Local Customizations")
+	assert.Contains(t, template, ".printing-press-patches/")
+	assert.Contains(t, template, "source catalog's `AGENTS.md`")
+
+	// Mechanics must not be re-inlined into the per-CLI template.
+	assert.NotContains(t, template, "deferred_to_upstream")
+	assert.NotContains(t, template, "upstream_issue")
+	assert.NotContains(t, template, "schema_version")
+	assert.NotContains(t, template, "Minimum shape:")
 }
 
 func TestPolishSkillHardGatesPublishValidate(t *testing.T) {

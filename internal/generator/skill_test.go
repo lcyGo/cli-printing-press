@@ -710,6 +710,8 @@ func TestSkillFrontmatterMetadataOmitsUnknownCategoryInstall(t *testing.T) {
 		"empty Category should not bake a placeholder category into install metadata")
 	assert.Contains(t, content, "npx -y @mvanhorn/printing-press-library install uncategorized --cli-only",
 		"empty Category should keep the category-agnostic installer path")
+	assert.NotContains(t, content, "--cli-only --bin-dir",
+		"empty Category should rely on the installer default bin directory")
 }
 
 // TestSkillNoExtraCommandsIsBackwardCompatible asserts the template emits
